@@ -122,6 +122,7 @@ terraform apply
 ### 2. EKS — kubeconfig 업데이트
 
 ```bash
+cd .. # terraform 폴더에서 상위 폴더로 이동
 aws eks update-kubeconfig \
   --region ap-northeast-2 \
   --name $(terraform -chdir=terraform output -raw cluster_name)
@@ -180,7 +181,6 @@ kubectl get svc concert-frontend-svc
 ```bash
 bash deploy.sh
 ```
-
 `deploy.sh` 내부 흐름:
 
 ```
@@ -188,8 +188,11 @@ helm install keda                          KEDA 컨트롤러 설치
   └─ kubectl annotate keda-operator        IRSA 연결
   └─ envsubst | kubectl apply              keda-scaledobject.yaml 적용
 
+aws ecr-public get-login-password          ECR Public 인증 (us-east-1 필수)
+  └─ helm registry login public.ecr.aws
 helm install karpenter                     Karpenter 컨트롤러 설치
   └─ envsubst | kubectl apply              karpenter-nodepool.yaml 적용
+```─ envsubst | kubectl apply              karpenter-nodepool.yaml 적용
 ```
 
 ---
@@ -216,6 +219,59 @@ karpenter     karpenter-xxx                           1/1     Running
 kubectl get svc concert-frontend-svc
 # EXTERNAL-IP 값이 접속 URL
 ```
+
+---
+
+## 리소스 삭제
+
+Helm과 kubectl로 생성한 리소스를 먼저 제거한 뒤 Terraform으로 AWS 인프라를 삭제합니다.
+순서를 지키지 않으면 LoadBalancer, 노드 등이 VPC에 남아 `terraform destroy`가 실패합니다.
+
+```
+[1] kubectl delete          앱 / Redis / KEDA CRD 제거
+      │
+[2] helm uninstall keda     KEDA 컨트롤러 제거
+      │
+[3] helm uninstall karpenter   Karpenter 컨트롤러 제거
+      │
+[4] terraform destroy       AWS 인프라 전체 삭제
+```
+
+### 1. Kubernetes 리소스 제거
+
+```bash
+# KEDA ScaledObject, Karpenter NodePool 제거
+kubectl delete -f keda-scaledobject.yaml
+kubectl delete -f karpenter-nodepool.yaml
+
+# 앱 및 Redis 제거 (LoadBalancer Service 포함)
+AWS_ACCOUNT_ID=$(terraform -chdir=terraform output -raw account_id) \
+  envsubst < app-deployment.yaml | kubectl delete -f -
+kubectl delete -f redis.yaml
+
+# worker-sa ServiceAccount 제거
+kubectl delete serviceaccount worker-sa
+```
+
+### 2. Helm — KEDA / Karpenter 제거
+
+```bash
+helm uninstall keda -n keda
+helm uninstall karpenter -n karpenter
+
+kubectl delete namespace keda
+kubectl delete namespace karpenter
+```
+
+### 3. Terraform — AWS 인프라 삭제
+
+```bash
+cd terraform
+terraform destroy
+```
+
+> LoadBalancer가 완전히 삭제되기까지 수 분이 걸릴 수 있습니다.
+> `terraform destroy` 중 VPC 삭제 실패 시 AWS 콘솔에서 ENI(탄력적 네트워크 인터페이스)가 남아있는지 확인하세요.
 
 ---
 

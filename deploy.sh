@@ -27,7 +27,10 @@ envsubst < keda-scaledobject.yaml | kubectl apply -f -
 
 # ── Karpenter ─────────────────────────────────────────
 echo "[3/4] Installing Karpenter..."
-helm repo add karpenter oci://public.ecr.aws/karpenter --force-update 2>/dev/null || true
+# ECR Public은 us-east-1로 인증해야 합니다
+aws ecr-public get-login-password --region us-east-1 \
+  | helm registry login --username AWS --password-stdin public.ecr.aws
+
 helm upgrade --install karpenter oci://public.ecr.aws/karpenter/karpenter \
   --version 1.3.3 \
   --namespace karpenter --create-namespace --wait \
