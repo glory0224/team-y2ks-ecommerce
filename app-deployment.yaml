@@ -1,0 +1,1924 @@
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: modo-critical
+value: 100000
+globalDefault: false
+description: "Redis 등 전체 시스템의 기반이 되는 핵심 서비스 - 절대 선점 불가"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: modo-high
+value: 10000
+globalDefault: false
+description: "사용자 접속 프론트엔드 - 트래픽 스파이크 시에도 항상 보장"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: modo-normal
+value: 1000
+globalDefault: true
+description: "KEDA Worker - 이벤트 처리용, 리소스 부족 시 선점 허용"
+---
+# Kubernetes RBAC: worker-sa가 K8s API로 파드/노드/디플로이먼트를 읽을 수 있게 허용
+# /api/admin/k8s 엔드포인트가 서비스 어카운트 토큰으로 K8s API를 직접 호출합니다.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: modo-k8s-reader
+rules:
+- apiGroups: [""]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: modo-k8s-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: modo-k8s-reader
+subjects:
+- kind: ServiceAccount
+  name: worker-sa
+  namespace: default
+---
+# AWS 인프라 설정 ConfigMap
+# SQS URL, Region 등 AWS 관련 설정을 한 곳에서 관리합니다.
+# 계정 ID가 코드에 하드코딩되지 않도록 여기서 중앙 관리합니다.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aws-config
+data:
+  SQS_QUEUE_URL: "https://sqs.ap-northeast-2.amazonaws.com/314240764197/y2ks-queue"
+  AWS_REGION: "ap-northeast-2"
+  DDB_TABLE: "modo-coupon-claims"
+---
+# AWS 인프라 초기화 Job
+# 앱 배포 전 SQS 큐와 DynamoDB 테이블이 없으면 자동으로 생성합니다.
+# kubectl apply 시 한 번 실행되며 5분 후 자동 삭제됩니다.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: aws-infra-setup
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      serviceAccountName: worker-sa
+      restartPolicy: OnFailure
+      containers:
+      - name: setup
+        image: python:3.9-slim
+        command: ["/bin/sh", "-c"]
+        args: ["pip install boto3 -q && python /app/setup.py"]
+        env:
+        - name: AWS_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: aws-config
+              key: AWS_REGION
+        - name: DDB_TABLE
+          valueFrom:
+            configMapKeyRef:
+              name: aws-config
+              key: DDB_TABLE
+        - name: SQS_QUEUE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: aws-config
+              key: SQS_QUEUE_URL
+        volumeMounts:
+        - name: code-volume
+          mountPath: /app
+      volumes:
+      - name: code-volume
+        configMap:
+          name: concert-app-code
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: concert-app-code
+data:
+  app.py: |
+    from flask import Flask, jsonify, request
+    import boto3, redis, uuid, json, os, random, string, requests as http_requests
+    from prometheus_flask_exporter import PrometheusMetrics
+
+    app = Flask(__name__)
+    metrics = PrometheusMetrics(
+        app,
+        excluded_paths=['/metrics'],
+        group_by='url_rule',
+        default_labels={'app': 'concert-frontend'}
+    )
+
+    REDIS_HOST = os.environ.get('REDIS_HOST', 'redis-service')
+    PROMETHEUS_URL = os.environ.get('PROMETHEUS_URL', 'http://prometheus-service:9090')
+    AWS_REGION = os.environ.get('AWS_REGION', 'ap-northeast-2')
+    QUEUE_URL = os.environ.get('SQS_QUEUE_URL', '')
+    DDB_TABLE = os.environ.get('DDB_TABLE', 'modo-coupon-claims')
+    SENDER_EMAIL = 'pma5758@naver.com'
+
+    r = redis.Redis(host=REDIS_HOST, port=6379, db=0, decode_responses=True)
+    sqs_client = boto3.client('sqs', region_name=AWS_REGION)
+    ses_client = boto3.client('ses', region_name=AWS_REGION)
+
+    def gen_coupon():
+        chars = string.ascii_uppercase + string.digits
+        p1 = ''.join(random.choices(chars, k=4))
+        p2 = ''.join(random.choices(chars, k=4))
+        return f'MODO-{p1}-{p2}'
+
+    MAIN_HTML = open('/app/main.html').read()
+    EVENT_HTML = open('/app/event.html').read()
+
+    @app.route('/')
+    def index():
+        return MAIN_HTML
+
+    @app.route('/event')
+    def event():
+        return EVENT_HTML
+
+    @app.route('/api/tickets')
+    def get_tickets():
+        val = r.get('tickets')
+        if val is None:
+            r.set('tickets', 100)
+            val = '100'
+        return jsonify({'remaining': int(val)})
+
+    @app.route('/api/claim', methods=['POST'])
+    def claim():
+        request_id = str(uuid.uuid4())
+        r.setex(f'result:{request_id}', 600, 'pending')
+        try:
+            sqs_client.send_message(
+                QueueUrl=QUEUE_URL,
+                MessageBody=json.dumps({'request_id': request_id, 'type': 'claim'})
+            )
+        except Exception as e:
+            r.delete(f'result:{request_id}')
+            return jsonify({'error': 'queue_unavailable', 'message': str(e)}), 503
+        return jsonify({'request_id': request_id, 'status': 'queued'})
+
+    @app.route('/api/check/<request_id>')
+    def check_result(request_id):
+        result = r.get(f'result:{request_id}')
+        return jsonify({'status': result if result else 'pending'})
+
+    @app.route('/admin')
+    def admin():
+        return open('/app/admin.html').read()
+
+    @app.route('/api/admin/stats')
+    def admin_stats():
+        tickets_left = r.get('tickets')
+        if tickets_left is None:
+            tickets_left = 100
+        tickets_left = int(tickets_left)
+        claimed = 100 - max(tickets_left, 0)
+        try:
+            ddb = boto3.resource('dynamodb', region_name=AWS_REGION)
+            table = ddb.Table(DDB_TABLE)
+            # scan 1번으로 모두 집계
+            winner_count = loser_count = email_sent_count = 0
+            scan_kw = {'ProjectionExpression': '#s, email_sent', 'ExpressionAttributeNames': {'#s': 'status'}}
+            while True:
+                resp = table.scan(**scan_kw)
+                for item in resp.get('Items', []):
+                    if item.get('status') == 'winner':
+                        winner_count += 1
+                    elif item.get('status') == 'loser':
+                        loser_count += 1
+                    if item.get('email_sent') == True:
+                        email_sent_count += 1
+                if 'LastEvaluatedKey' not in resp:
+                    break
+                scan_kw['ExclusiveStartKey'] = resp['LastEvaluatedKey']
+        except Exception as e:
+            winner_count = loser_count = email_sent_count = 0
+        try:
+            sqs_resp = sqs_client.get_queue_attributes(
+                QueueUrl=QUEUE_URL,
+                AttributeNames=['ApproximateNumberOfMessages', 'ApproximateNumberOfMessagesNotVisible']
+            )
+            queue_depth = int(sqs_resp['Attributes'].get('ApproximateNumberOfMessages', 0))
+            in_flight = int(sqs_resp['Attributes'].get('ApproximateNumberOfMessagesNotVisible', 0))
+        except Exception:
+            queue_depth = in_flight = 0
+        return jsonify({
+            'tickets_left': max(tickets_left, 0),
+            'tickets_claimed': claimed,
+            'winner_count': winner_count,
+            'loser_count': loser_count,
+            'email_sent_count': email_sent_count,
+            'queue_depth': queue_depth,
+            'in_flight': in_flight
+        })
+
+    @app.route('/api/admin/claims')
+    def admin_claims():
+        try:
+            page = max(1, int(request.args.get('page', 1)))
+            limit = max(1, min(100, int(request.args.get('limit', 20))))
+            ddb = boto3.resource('dynamodb', region_name=AWS_REGION)
+            table = ddb.Table(DDB_TABLE)
+            items = []
+            scan_kw = {}
+            while True:
+                result = table.scan(**scan_kw)
+                items.extend(result.get('Items', []))
+                if 'LastEvaluatedKey' not in result:
+                    break
+                scan_kw['ExclusiveStartKey'] = result['LastEvaluatedKey']
+            items = sorted(items, key=lambda x: x.get('claimed_at', ''), reverse=True)
+            total = len(items)
+            start = (page - 1) * limit
+            pages = max(1, (total + limit - 1) // limit)
+            return jsonify({'items': items[start:start+limit], 'total': total, 'page': page, 'limit': limit, 'pages': pages})
+        except Exception as e:
+            return jsonify({'items': [], 'total': 0, 'page': 1, 'limit': 20, 'pages': 1, 'error': str(e)})
+
+    @app.route('/api/admin/metrics')
+    def admin_metrics():
+        query = request.args.get('query', '')
+        start = request.args.get('start', '')
+        end = request.args.get('end', '')
+        step = request.args.get('step', '15s')
+        try:
+            resp = http_requests.get(
+                f'{PROMETHEUS_URL}/api/v1/query_range',
+                params={'query': query, 'start': start, 'end': end, 'step': step},
+                timeout=10
+            )
+            return jsonify(resp.json()), resp.status_code
+        except Exception:
+            return jsonify({'error': 'prometheus unavailable'}), 503
+
+    @app.route('/api/admin/metrics/instant')
+    def admin_metrics_instant():
+        query = request.args.get('query', '')
+        try:
+            resp = http_requests.get(
+                f'{PROMETHEUS_URL}/api/v1/query',
+                params={'query': query},
+                timeout=10
+            )
+            return jsonify(resp.json()), resp.status_code
+        except Exception:
+            return jsonify({'error': 'prometheus unavailable'}), 503
+
+    @app.route('/api/admin/k8s')
+    def admin_k8s():
+        try:
+            token = open('/var/run/secrets/kubernetes.io/serviceaccount/token').read().strip()
+            ns = open('/var/run/secrets/kubernetes.io/serviceaccount/namespace').read().strip()
+            ca = '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
+            host = os.environ.get('KUBERNETES_SERVICE_HOST', 'kubernetes.default.svc')
+            port = os.environ.get('KUBERNETES_SERVICE_PORT', '443')
+            base = f'https://{host}:{port}'
+            hdrs = {'Authorization': f'Bearer {token}', 'Accept': 'application/json'}
+            pr = http_requests.get(f'{base}/api/v1/namespaces/{ns}/pods?labelSelector=app%3Dworker', headers=hdrs, verify=ca, timeout=5)
+            pods_list = pr.json().get('items', [])
+            worker_running = sum(1 for p in pods_list if p.get('status', {}).get('phase') == 'Running')
+            nr = http_requests.get(f'{base}/api/v1/nodes', headers=hdrs, verify=ca, timeout=5)
+            ready_nodes = spot_nodes = 0
+            for node in nr.json().get('items', []):
+                conds = node.get('status', {}).get('conditions', [])
+                if any(c.get('type') == 'Ready' and c.get('status') == 'True' for c in conds):
+                    ready_nodes += 1
+                    if node.get('metadata', {}).get('labels', {}).get('karpenter.sh/capacity-type') == 'spot':
+                        spot_nodes += 1
+            dr = http_requests.get(f'{base}/apis/apps/v1/namespaces/{ns}/deployments/concert-worker', headers=hdrs, verify=ca, timeout=5)
+            desired = dr.json().get('spec', {}).get('replicas', 1)
+            return jsonify({'worker_pods': worker_running, 'worker_desired': desired, 'nodes_ready': ready_nodes, 'nodes_spot': spot_nodes})
+        except Exception as e:
+            return jsonify({'error': str(e), 'worker_pods': 0, 'worker_desired': 0, 'nodes_ready': 0, 'nodes_spot': 0})
+
+    @app.route('/api/admin/reset', methods=['POST'])
+    def admin_reset():
+        # Redis 초기화
+        r.set('tickets', 100)
+        # SQS 큐 비우기 (대기 중인 메시지 모두 삭제)
+        try:
+            while True:
+                resp = sqs_client.receive_message(QueueUrl=QUEUE_URL, MaxNumberOfMessages=10, WaitTimeSeconds=0)
+                msgs = resp.get('Messages', [])
+                if not msgs:
+                    break
+                for msg in msgs:
+                    sqs_client.delete_message(QueueUrl=QUEUE_URL, ReceiptHandle=msg['ReceiptHandle'])
+        except Exception as e:
+            print(f'SQS flush warning: {e}', flush=True)
+        # DynamoDB 전체 삭제
+        try:
+            ddb_r = boto3.resource('dynamodb', region_name=AWS_REGION)
+            table = ddb_r.Table(DDB_TABLE)
+            scan = table.scan(ProjectionExpression='request_id')
+            with table.batch_writer() as batch:
+                for item in scan.get('Items', []):
+                    batch.delete_item(Key={'request_id': item['request_id']})
+            while 'LastEvaluatedKey' in scan:
+                scan = table.scan(ProjectionExpression='request_id', ExclusiveStartKey=scan['LastEvaluatedKey'])
+                with table.batch_writer() as batch:
+                    for item in scan.get('Items', []):
+                        batch.delete_item(Key={'request_id': item['request_id']})
+        except Exception as e:
+            print(f'DynamoDB reset warning: {e}', flush=True)
+        return jsonify({'success': True, 'message': '티켓 100장, SQS 큐, DynamoDB 기록이 초기화되었습니다.'})
+
+    @app.route('/api/submit-email', methods=['POST'])
+    def submit_email():
+        data = request.get_json()
+        request_id = data.get('request_id', '')
+        email = data.get('email', '')
+        if not email or '@' not in email:
+            return jsonify({'success': False, 'message': '올바른 이메일을 입력해주세요.'})
+        result = r.get(f'result:{request_id}')
+        if result != 'winner':
+            return jsonify({'success': False, 'message': '당첨자가 아닙니다.'})
+        if r.get(f'email_sent:{request_id}'):
+            return jsonify({'success': False, 'message': '이미 발송되었습니다.'})
+        coupon = r.get(f'coupon:{request_id}')
+        if not coupon:
+            return jsonify({'success': False, 'message': '쿠폰 정보를 찾을 수 없습니다.'})
+        try:
+            ses_client.send_email(
+                Source=SENDER_EMAIL,
+                Destination={'ToAddresses': [email]},
+                Message={
+                    'Subject': {'Data': '🎉 80% 할인 쿠폰 당첨을 축하드립니다!'},
+                    'Body': {'Html': {'Data': f'<div style="font-family:sans-serif;max-width:500px;margin:0 auto;padding:40px;"><h2 style="color:#0a0a0a;margin-bottom:16px;">🎉 당첨을 축하합니다!</h2><p style="color:#555;margin-bottom:24px;">Y2KS 봄 시즌 80% 할인 쿠폰이 발급되었습니다.</p><div style="background:#f5f5f5;padding:24px;border-radius:8px;text-align:center;margin-bottom:24px;"><p style="font-size:11px;color:#999;margin-bottom:8px;letter-spacing:2px;">쿠폰 코드</p><strong style="font-size:26px;letter-spacing:6px;color:#0a0a0a;">{coupon}</strong></div><p style="color:#999;font-size:12px;">유효기간: 2026년 6월 30일까지<br>Y2KS 온라인 스토어에서 사용 가능합니다.</p></div>'}}
+                }
+            )
+            r.setex(f'email_sent:{request_id}', 600, '1')
+            try:
+                ddb = boto3.resource('dynamodb', region_name=AWS_REGION)
+                table = ddb.Table(DDB_TABLE)
+                table.update_item(
+                    Key={'request_id': request_id},
+                    UpdateExpression='SET email = :e, email_sent = :s',
+                    ExpressionAttributeValues={':e': email, ':s': True}
+                )
+            except Exception as ddb_e:
+                print(f'DynamoDB update warning: {ddb_e}', flush=True)
+            return jsonify({'success': True, 'coupon': coupon})
+        except Exception as e:
+            return jsonify({'success': False, 'message': f'이메일 발송 실패: {str(e)}'})
+
+    if __name__ == '__main__':
+        app.run(host='0.0.0.0', port=5000, debug=False)
+
+  worker.py: |
+    import boto3, redis, json, time, os, random, string
+    from datetime import datetime, timezone
+
+    REDIS_HOST = os.environ.get('REDIS_HOST', 'redis-service')
+    AWS_REGION = os.environ.get('AWS_REGION', 'ap-northeast-2')
+    QUEUE_URL = os.environ.get('SQS_QUEUE_URL', '')
+    DDB_TABLE = os.environ.get('DDB_TABLE', 'modo-coupon-claims')
+
+    r = redis.Redis(host=REDIS_HOST, port=6379, db=0, decode_responses=True)
+    sqs = boto3.client('sqs', region_name=AWS_REGION)
+    ddb = boto3.resource('dynamodb', region_name=AWS_REGION)
+    table = ddb.Table(DDB_TABLE)
+
+    def gen_coupon():
+        chars = string.ascii_uppercase + string.digits
+        p1 = ''.join(random.choices(chars, k=4))
+        p2 = ''.join(random.choices(chars, k=4))
+        return f'MODO-{p1}-{p2}'
+
+    def save_to_ddb(request_id, status, coupon_code=None):
+        item = {
+            'request_id': request_id,
+            'status': status,
+            'claimed_at': datetime.now(timezone.utc).isoformat(),
+            'email_sent': False
+        }
+        if coupon_code:
+            item['coupon_code'] = coupon_code
+        try:
+            table.put_item(Item=item)
+            print(f'DynamoDB saved: {request_id} -> {status}', flush=True)
+        except Exception as e:
+            print(f'DynamoDB error: {e}', flush=True)
+
+    def restore_tickets_from_ddb():
+        """Redis 재시작 시 DynamoDB 당첨 수를 기반으로 남은 티켓 수량 복구"""
+        try:
+            winners = 0
+            scan_kwargs = {
+                'FilterExpression': '#s = :winner',
+                'ExpressionAttributeNames': {'#s': 'status'},
+                'ExpressionAttributeValues': {':winner': 'winner'},
+                'Select': 'COUNT'
+            }
+            response = table.scan(**scan_kwargs)
+            winners += response['Count']
+            while 'LastEvaluatedKey' in response:
+                scan_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
+                response = table.scan(**scan_kwargs)
+                winners += response['Count']
+            remaining = max(100 - winners, 0)
+            print(f'Redis restored from DynamoDB: {winners} winners, tickets={remaining}', flush=True)
+            return remaining
+        except Exception as e:
+            print(f'DynamoDB restore error: {e} — defaulting to 0 for safety', flush=True)
+            return 0
+
+    print('MODO Worker started', flush=True)
+
+    while True:
+        try:
+            open('/tmp/worker_alive', 'w').close()
+            response = sqs.receive_message(
+                QueueUrl=QUEUE_URL,
+                MaxNumberOfMessages=1,
+                WaitTimeSeconds=5
+            )
+            if 'Messages' in response:
+                for msg in response['Messages']:
+                    receipt = msg['ReceiptHandle']
+                    try:
+                        body = json.loads(msg['Body'])
+                        request_id = body.get('request_id')
+                        print(f'Processing claim: {request_id}', flush=True)
+                        if r.get('tickets') is None:
+                            remaining = restore_tickets_from_ddb()
+                            r.set('tickets', remaining, nx=True)  # 여러 Worker 동시 실행 시 한 번만 설정
+                        tickets = r.decr('tickets')
+                        if tickets >= 0:
+                            coupon = gen_coupon()
+                            r.setex(f'result:{request_id}', 600, 'winner')
+                            r.setex(f'coupon:{request_id}', 600, coupon)
+                            save_to_ddb(request_id, 'winner', coupon)
+                            print(f'Winner! coupon={coupon}, left={tickets}', flush=True)
+                        else:
+                            r.set('tickets', 0)
+                            r.setex(f'result:{request_id}', 600, 'loser')
+                            save_to_ddb(request_id, 'loser')
+                            print(f'Sold out. {request_id} missed.', flush=True)
+                        sqs.delete_message(QueueUrl=QUEUE_URL, ReceiptHandle=receipt)
+                    except Exception as e:
+                        print(f'Error processing {request_id}: {e} — message will be retried', flush=True)
+        except Exception as e:
+            print(f'Queue error: {e}', flush=True)
+            time.sleep(2)
+
+  setup.py: |
+    # AWS 인프라 초기화 스크립트
+    # Job(aws-infra-setup)에 의해 배포 시 한 번 실행됩니다.
+    # SQS 큐와 DynamoDB 테이블이 없으면 생성합니다.
+    import boto3, os, sys
+
+    region = os.environ.get('AWS_REGION', 'ap-northeast-2')
+    # SQS_QUEUE_URL에서 큐 이름 추출 (URL 마지막 경로 = 큐 이름)
+    queue_url_env = os.environ.get('SQS_QUEUE_URL', '')
+    queue_name = queue_url_env.split('/')[-1] if queue_url_env else 'y2ks-queue'
+    table_name = os.environ.get('DDB_TABLE', 'modo-coupon-claims')
+
+    print('=== AWS Infrastructure Setup ===', flush=True)
+
+    # SQS 큐 생성
+    sqs = boto3.client('sqs', region_name=region)
+    try:
+        r = sqs.create_queue(QueueName=queue_name)
+        print(f'[OK] SQS queue created: {r["QueueUrl"]}', flush=True)
+    except sqs.exceptions.QueueNameExists:
+        print(f'[OK] SQS queue already exists: {queue_name}', flush=True)
+    except Exception as e:
+        print(f'[FAIL] SQS error: {e}', file=sys.stderr, flush=True)
+
+    # DynamoDB 테이블 생성
+    ddb = boto3.client('dynamodb', region_name=region)
+    try:
+        ddb.create_table(
+            TableName=table_name,
+            AttributeDefinitions=[{'AttributeName': 'request_id', 'AttributeType': 'S'}],
+            KeySchema=[{'AttributeName': 'request_id', 'KeyType': 'HASH'}],
+            BillingMode='PAY_PER_REQUEST'
+        )
+        print(f'[OK] DynamoDB table created: {table_name}', flush=True)
+    except ddb.exceptions.ResourceInUseException:
+        print(f'[OK] DynamoDB table already exists: {table_name}', flush=True)
+    except Exception as e:
+        print(f'[FAIL] DynamoDB error: {e}', file=sys.stderr, flush=True)
+
+    print('=== Setup complete ===', flush=True)
+
+  main.html: |
+    <!DOCTYPE html>
+    <html lang="ko">
+    <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Y2KS - 모던 패션 스토어</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+    <style>
+    *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+    :root{--black:#0a0a0a;--white:#fff;--g100:#f5f5f5;--g200:#e8e8e8;--g400:#9e9e9e;--g600:#555;--accent:#c8a96e;--accent-d:#a8803e}
+    body{font-family:'Nanum Gothic',sans-serif;background:var(--white);color:var(--black);overflow-x:hidden}
+    a{text-decoration:none;color:inherit}
+    .top-bar{background:var(--black);color:rgba(255,255,255,0.85);text-align:center;padding:10px 20px;font-size:12px;letter-spacing:.5px}
+    .top-bar a{color:var(--accent);font-weight:700;margin-left:8px;text-decoration:underline;transition:color .2s}
+    .top-bar a:hover{color:#fff}
+    .header{position:sticky;top:0;z-index:100;background:rgba(255,255,255,.97);backdrop-filter:blur(12px);border-bottom:1px solid var(--g200);padding:0 48px}
+    .h-inner{max-width:1400px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;height:72px}
+    .logo{font-family:'Outfit',sans-serif;font-size:30px;font-weight:800;letter-spacing:10px;color:var(--black)}
+    .search{flex:1;max-width:420px;margin:0 48px;position:relative}
+    .search input{width:100%;padding:11px 46px 11px 18px;border:1.5px solid var(--g200);border-radius:50px;font-size:13px;background:var(--g100);outline:none;cursor:default;color:#aaa;font-family:inherit}
+    .search-icon{position:absolute;right:16px;top:50%;transform:translateY(-50%);color:var(--g400);font-size:15px}
+    .h-icons{display:flex;gap:4px}
+    .icon-btn{width:42px;height:42px;display:flex;align-items:center;justify-content:center;border-radius:50%;background:none;border:none;cursor:default;font-size:19px;transition:background .2s}
+    .icon-btn:hover{background:var(--g100)}
+    .nav{border-bottom:1px solid var(--g200)}
+    .nav-inner{max-width:1400px;margin:0 auto;padding:0 48px;display:flex}
+    .nav-item{padding:14px 18px;font-size:13px;font-weight:600;color:var(--g600);cursor:default;position:relative;transition:color .2s;white-space:nowrap}
+    .nav-item:hover{color:var(--black)}
+    .nav-item.active{color:var(--black)}
+    .nav-item.active::after{content:'';position:absolute;bottom:0;left:18px;right:18px;height:2px;background:var(--black)}
+    .nav-event{color:var(--accent-d)!important;font-weight:700}
+    .nav-event:hover{color:var(--accent)!important}
+    .hero{height:580px;background:linear-gradient(135deg,#0a0a0a 0%,#1a1a2e 60%,#2d1b4e 100%);display:flex;align-items:center;position:relative;overflow:hidden}
+    .hero-bg{position:absolute;inset:0;background:url('https://picsum.photos/seed/fashion-spring/1400/580') center/cover;opacity:.18}
+    .hero-deco{position:absolute;right:-80px;bottom:-60px;width:500px;height:500px;border-radius:50%;background:radial-gradient(circle,rgba(200,169,110,.12),transparent 70%)}
+    .hero-content{position:relative;z-index:1;max-width:1400px;margin:0 auto;padding:0 80px;width:100%}
+    .hero-tag{display:inline-block;background:var(--accent);color:#fff;font-family:'Outfit',sans-serif;font-size:10px;font-weight:700;letter-spacing:4px;padding:5px 14px;border-radius:2px;margin-bottom:20px}
+    .hero-title{font-family:'Outfit',sans-serif;font-size:72px;font-weight:800;color:#fff;line-height:1.05;letter-spacing:-3px;margin-bottom:18px}
+    .hero-sub{font-size:15px;color:rgba(255,255,255,.6);margin-bottom:40px;letter-spacing:.5px}
+    .hero-btn{display:inline-block;background:#fff;color:var(--black);padding:15px 44px;font-weight:700;font-size:13px;letter-spacing:2px;border-radius:3px;transition:all .3s;cursor:default}
+    .hero-btn:hover{background:var(--accent);color:#fff;transform:translateY(-2px)}
+    .event-wrap{max-width:1400px;margin:48px auto;padding:0 48px}
+    .event-band{background:linear-gradient(100deg,#0a0a0a,#1a1a2e);border:1px solid var(--accent);border-radius:10px;padding:28px 44px;display:flex;align-items:center;justify-content:space-between;gap:20px}
+    .eb-label{font-size:10px;letter-spacing:4px;color:var(--accent);font-family:'Outfit',sans-serif;font-weight:700;margin-bottom:8px}
+    .eb-title{font-size:22px;font-weight:700;color:#fff;margin-bottom:5px}
+    .eb-sub{font-size:13px;color:rgba(255,255,255,.5)}
+    .eb-btn{background:var(--accent);color:#fff;padding:16px 44px;font-weight:700;font-size:14px;letter-spacing:1px;border-radius:5px;white-space:nowrap;transition:all .3s;display:inline-block}
+    .eb-btn:hover{background:var(--accent-d);transform:translateY(-2px);box-shadow:0 8px 24px rgba(200,169,110,.3)}
+    .section{max-width:1400px;margin:0 auto;padding:0 48px 80px}
+    .sec-header{display:flex;align-items:baseline;gap:14px;margin-bottom:32px;padding-bottom:16px;border-bottom:2px solid var(--black)}
+    .sec-title{font-family:'Outfit',sans-serif;font-size:22px;font-weight:700;letter-spacing:2px}
+    .sec-sub{font-size:12px;color:var(--g400);letter-spacing:.5px}
+    .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:28px}
+    .card{cursor:default}
+    .card-img{position:relative;aspect-ratio:3/4;overflow:hidden;background:var(--g100);border-radius:6px;margin-bottom:14px}
+    .card-img img{width:100%;height:100%;object-fit:cover;transition:transform .5s ease}
+    .card:hover .card-img img{transform:scale(1.06)}
+    .badge{position:absolute;top:12px;left:12px;padding:3px 9px;font-size:10px;font-weight:700;letter-spacing:1.5px;border-radius:2px}
+    .b-best{background:var(--black);color:#fff}
+    .b-new{background:var(--accent);color:#fff}
+    .b-sale{background:#e53935;color:#fff}
+    .card-brand{font-size:10px;color:var(--g400);letter-spacing:1px;margin-bottom:5px;text-transform:uppercase}
+    .card-name{font-size:14px;font-weight:700;margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .card-price{font-size:15px;font-weight:700}
+    .price-sale{color:#e53935}
+    .price-orig{color:var(--g400);text-decoration:line-through;font-size:12px;font-weight:400;margin-left:6px}
+    footer{background:var(--black);color:rgba(255,255,255,.45);padding:56px 48px 40px;font-size:12px;line-height:2.2}
+    .ft-inner{max-width:1400px;margin:0 auto;display:flex;justify-content:space-between;align-items:flex-start;gap:40px}
+    .ft-logo{font-family:'Outfit',sans-serif;font-size:26px;font-weight:800;letter-spacing:8px;color:#fff;margin-bottom:14px}
+    .ft-cols{display:flex;gap:56px}
+    .ft-col h4{color:rgba(255,255,255,.8);font-size:12px;font-weight:700;letter-spacing:2px;margin-bottom:12px}
+    .ft-col p{cursor:default;transition:color .2s}
+    .ft-col p:hover{color:rgba(255,255,255,.7)}
+    @media(max-width:900px){.grid{grid-template-columns:repeat(2,1fr)}.hero-title{font-size:44px}.search{display:none}}
+    </style>
+    </head>
+    <body>
+    <div class="top-bar">🌸 봄 시즌 특별 이벤트 진행 중! 선착순 100명에게 쿠폰을 드립니다 <a href="/event">지금 받기 →</a></div>
+    <header class="header">
+      <div class="h-inner">
+        <div class="logo">Y2KS</div>
+        <div class="search"><input type="text" placeholder="원하는 상품을 검색하세요" readonly><span class="search-icon">🔍</span></div>
+        <div class="h-icons">
+          <button class="icon-btn">🤍</button>
+          <button class="icon-btn">🛍️</button>
+          <button class="icon-btn">👤</button>
+        </div>
+      </div>
+    </header>
+    <nav class="nav">
+      <div class="nav-inner">
+        <div class="nav-item active">신상품</div>
+        <div class="nav-item">베스트</div>
+        <div class="nav-item">아우터</div>
+        <div class="nav-item">상의</div>
+        <div class="nav-item">하의</div>
+        <div class="nav-item">원피스</div>
+        <div class="nav-item">가방</div>
+        <div class="nav-item">신발</div>
+        <div class="nav-item">세일</div>
+        <a class="nav-item nav-event" href="/event">🎁 이벤트</a>
+      </div>
+    </nav>
+    <section class="hero">
+      <div class="hero-bg"></div>
+      <div class="hero-deco"></div>
+      <div class="hero-content">
+        <div class="hero-tag">2026 SPRING COLLECTION</div>
+        <h1 class="hero-title">New Season,<br>New Style.</h1>
+        <p class="hero-sub">봄을 맞이하는 가장 세련된 방법</p>
+        <span class="hero-btn">SHOP NOW</span>
+      </div>
+    </section>
+    <div class="event-wrap">
+      <div class="event-band">
+        <div>
+          <div class="eb-label">LIMITED EVENT</div>
+          <div class="eb-title">🎁 봄맞이 특별 쿠폰 100장 무료 증정!</div>
+          <div class="eb-sub">선착순 100명 한정 · 80% 할인 쿠폰 · 지금 바로 참여하세요</div>
+        </div>
+        <a href="/event" class="eb-btn">쿠폰 받기 →</a>
+      </div>
+    </div>
+    <main class="section">
+      <div class="sec-header">
+        <h2 class="sec-title">BEST SELLERS</h2>
+        <span class="sec-sub">이번 시즌 가장 사랑받는 아이템</span>
+      </div>
+      <div class="grid">
+        <div class="card"><div class="card-img"><img src="https://picsum.photos/seed/mfashion1/300/400" alt="오버핏 코튼 티셔츠"><span class="badge b-best">BEST</span></div><div class="card-brand">Y2KS BASIC</div><div class="card-name">오버핏 코튼 티셔츠</div><div class="card-price">29,000원</div></div>
+        <div class="card"><div class="card-img"><img src="https://picsum.photos/seed/mfashion2/300/400" alt="슬림 스트레이트 진"><span class="badge b-new">NEW</span></div><div class="card-brand">Y2KS DENIM</div><div class="card-name">슬림 스트레이트 진</div><div class="card-price">79,000원</div></div>
+        <div class="card"><div class="card-img"><img src="https://picsum.photos/seed/mfashion3/300/400" alt="루즈핏 후드 집업"></div><div class="card-brand">Y2KS SPORT</div><div class="card-name">루즈핏 후드 집업</div><div class="card-price">89,000원</div></div>
+        <div class="card"><div class="card-img"><img src="https://picsum.photos/seed/mfashion4/300/400" alt="플로럴 미디 드레스"><span class="badge b-best">BEST</span></div><div class="card-brand">Y2KS FEMME</div><div class="card-name">플로럴 미디 드레스</div><div class="card-price">119,000원</div></div>
+        <div class="card"><div class="card-img"><img src="https://picsum.photos/seed/mfashion5/300/400" alt="레이어드 니트 가디건"><span class="badge b-new">NEW</span></div><div class="card-brand">Y2KS KNIT</div><div class="card-name">레이어드 니트 가디건</div><div class="card-price">95,000원</div></div>
+        <div class="card"><div class="card-img"><img src="https://picsum.photos/seed/mfashion6/300/400" alt="울 블렌드 롱코트"></div><div class="card-brand">Y2KS OUTER</div><div class="card-name">울 블렌드 롱코트</div><div class="card-price">299,000원</div></div>
+        <div class="card"><div class="card-img"><img src="https://picsum.photos/seed/mfashion7/300/400" alt="레더 미니 크로스백"></div><div class="card-brand">Y2KS BAG</div><div class="card-name">레더 미니 크로스백</div><div class="card-price">159,000원</div></div>
+        <div class="card"><div class="card-img"><img src="https://picsum.photos/seed/mfashion7/300/400" alt="레더 미니 크로스백"></div><div class="card-brand">Y2KS BAG</div><div class="card-name">레더 미니 크로스백</div><div class="card-price">159,000원</div></div>
+      </div>
+    </main>
+    <footer>
+      <div class="ft-inner">
+        <div>
+          <div class="ft-logo">Y2KS</div>
+          <p>서울특별시 강남구 패션로 88, Y2KS 빌딩</p>
+          <p>고객센터: 1588-0000 | 평일 10:00–18:00</p>
+          <p>이메일: help@Y2KS-fashion.kr</p>
+          <p style="margin-top:12px;font-size:11px;">© 2026 Y2KS Fashion Inc. All rights reserved.</p>
+        </div>
+        <div class="ft-cols">
+          <div class="ft-col"><h4>SHOP</h4><p>신상품</p><p>베스트</p><p>세일</p><p>이벤트</p></div>
+          <div class="ft-col"><h4>HELP</h4><p>배송 안내</p><p>교환/반품</p><p>사이즈 가이드</p><p>FAQ</p></div>
+          <div class="ft-col"><h4>INFO</h4><p>브랜드 소개</p><p>지속 가능성</p><p>채용 정보</p><p>제휴 문의</p></div>
+        </div>
+      </div>
+    </footer>
+    </body>
+    </html>
+
+  admin.html: |
+    <!DOCTYPE html>
+    <html lang="ko">
+    <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Y2KS Admin</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+    *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+    :root{--black:#0a0a0a;--white:#fff;--g100:#f5f5f5;--g200:#e8e8e8;--g400:#9e9e9e;--g600:#555;--accent:#c8a96e;--accent-d:#a8803e;--green:#22c55e;--red:#ef4444;--blue:#3b82f6;--purple:#a78bfa}
+    body{font-family:'Outfit',sans-serif;background:#0d0d0d;color:#e8e8e8;min-height:100vh}
+    .header{background:#0a0a0a;border-bottom:1px solid #1f1f1f;padding:0 40px;display:flex;align-items:center;justify-content:space-between;height:64px}
+    .logo{font-size:22px;font-weight:800;letter-spacing:8px;color:#fff}
+    .logo span{color:var(--accent);font-size:12px;font-weight:400;letter-spacing:3px;margin-left:12px;vertical-align:middle}
+    .header-right{display:flex;align-items:center;gap:16px}
+    .refresh-btn{background:rgba(200,169,110,.12);border:1px solid rgba(200,169,110,.3);color:var(--accent);padding:8px 18px;border-radius:6px;font-size:13px;font-family:inherit;cursor:pointer;transition:all .2s}
+    .refresh-btn:hover{background:rgba(200,169,110,.2)}
+    .reset-btn{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:var(--red);padding:8px 18px;border-radius:6px;font-size:13px;font-family:inherit;cursor:pointer;transition:all .2s}
+    .reset-btn:hover{background:rgba(239,68,68,.2)}
+    .last-updated{font-size:12px;color:#555}
+    .tab-nav{background:#0a0a0a;border-bottom:1px solid #1f1f1f;padding:0 40px;display:flex;gap:0}
+    .tab-btn{padding:14px 24px;font-size:13px;font-weight:600;color:#555;cursor:pointer;border:none;background:none;font-family:inherit;transition:all .2s;border-bottom:2px solid transparent;letter-spacing:.5px}
+    .tab-btn:hover{color:#e8e8e8}
+    .tab-btn.active{color:var(--accent);border-bottom-color:var(--accent)}
+    .tab-panel{display:none}
+    .tab-panel.active{display:block}
+    .main{max-width:1400px;margin:0 auto;padding:32px 40px}
+    .stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:32px}
+    @media(max-width:900px){.stats-grid{grid-template-columns:repeat(2,1fr)}}
+    .stat-card{background:#111;border:1px solid #1f1f1f;border-radius:10px;padding:24px}
+    .stat-label{font-size:11px;letter-spacing:2px;color:#555;margin-bottom:10px;text-transform:uppercase}
+    .stat-value{font-size:36px;font-weight:700;line-height:1}
+    .stat-sub{font-size:12px;color:#444;margin-top:8px}
+    .v-green{color:var(--green)}
+    .v-red{color:var(--red)}
+    .v-accent{color:var(--accent)}
+    .v-blue{color:var(--blue)}
+    .v-purple{color:var(--purple)}
+    .section-title{font-size:13px;letter-spacing:2px;color:#555;text-transform:uppercase;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid #1f1f1f}
+    .queue-row{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:32px}
+    .queue-card{background:#111;border:1px solid #1f1f1f;border-radius:10px;padding:24px}
+    .progress-bar{height:6px;background:#1f1f1f;border-radius:3px;margin-top:16px;overflow:hidden}
+    .progress-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--accent),var(--accent-d));transition:width .5s ease}
+    table{width:100%;border-collapse:collapse}
+    .table-wrap{background:#111;border:1px solid #1f1f1f;border-radius:10px;overflow:hidden}
+    th{background:#0a0a0a;padding:12px 16px;text-align:left;font-size:11px;letter-spacing:1.5px;color:#555;text-transform:uppercase;font-weight:600;border-bottom:1px solid #1f1f1f}
+    td{padding:12px 16px;font-size:13px;border-bottom:1px solid #161616;color:#ccc}
+    tr:last-child td{border-bottom:none}
+    tr:hover td{background:rgba(255,255,255,.02)}
+    .badge{display:inline-block;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600;letter-spacing:.5px}
+    .b-winner{background:rgba(34,197,94,.12);color:var(--green);border:1px solid rgba(34,197,94,.2)}
+    .b-loser{background:rgba(239,68,68,.1);color:var(--red);border:1px solid rgba(239,68,68,.2)}
+    .b-sent{background:rgba(59,130,246,.1);color:var(--blue);border:1px solid rgba(59,130,246,.2)}
+    .b-pending{background:rgba(255,255,255,.05);color:#555;border:1px solid #222}
+    .empty{text-align:center;padding:48px;color:#333;font-size:14px}
+    .toast{position:fixed;bottom:32px;right:32px;background:#1a1a1a;border:1px solid #2a2a2a;color:#e8e8e8;padding:14px 22px;border-radius:8px;font-size:13px;opacity:0;transform:translateY(10px);transition:all .3s;pointer-events:none;z-index:999}
+    .toast.show{opacity:1;transform:translateY(0)}
+    .mon-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:16px}
+    @media(max-width:900px){.mon-grid{grid-template-columns:1fr}}
+    .chart-card{background:#111;border:1px solid #1f1f1f;border-radius:10px;padding:24px;margin-bottom:16px}
+    .chart-title{font-size:11px;letter-spacing:2px;color:#555;text-transform:uppercase;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid #1f1f1f}
+    .chart-wrap{position:relative;height:220px}
+    .chart-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#333;font-size:13px;background:#111;border-radius:4px}
+    .lt-config{background:#111;border:1px solid #1f1f1f;border-radius:10px;padding:28px;margin-bottom:16px}
+    .lt-grid{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:16px;align-items:end}
+    @media(max-width:900px){.lt-grid{grid-template-columns:1fr 1fr}}
+    .lt-label{font-size:11px;letter-spacing:1.5px;color:#555;text-transform:uppercase;margin-bottom:8px}
+    .lt-input{width:100%;background:#0d0d0d;border:1px solid #2a2a2a;border-radius:6px;padding:10px 14px;color:#e8e8e8;font-size:14px;font-family:inherit;outline:none;transition:border-color .2s}
+    .lt-input:focus{border-color:var(--accent)}
+    .lt-start-btn{background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.3);color:var(--green);padding:10px 28px;border-radius:6px;font-size:13px;font-family:inherit;cursor:pointer;font-weight:600;transition:all .2s;white-space:nowrap;width:100%}
+    .lt-start-btn:hover:not(:disabled){background:rgba(34,197,94,.25)}
+    .lt-start-btn:disabled{opacity:.4;cursor:not-allowed}
+    .lt-stop-btn{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:var(--red);padding:10px 28px;border-radius:6px;font-size:13px;font-family:inherit;cursor:pointer;font-weight:600;transition:all .2s;white-space:nowrap;width:100%;margin-top:8px}
+    .lt-stop-btn:hover{background:rgba(239,68,68,.2)}
+    .lt-stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:16px}
+    @media(max-width:900px){.lt-stats-grid{grid-template-columns:repeat(2,1fr)}}
+    .lt-prog-bar{height:8px;background:#1f1f1f;border-radius:4px;margin-top:12px;overflow:hidden}
+    .lt-prog-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--green),#16a34a);transition:width .3s ease}
+    .lt-log{background:#0a0a0a;border:1px solid #1f1f1f;border-radius:10px;padding:20px;height:200px;overflow-y:auto;font-family:monospace;font-size:12px}
+    .lt-log-line{padding:2px 0;border-bottom:1px solid #111}
+    .lt-log-line.success{color:#22c55e}
+    .lt-log-line.fail{color:#ef4444}
+    .lt-log-line.info{color:#555}
+    .pagination{display:flex;align-items:center;justify-content:center;gap:8px;padding:14px 16px;background:#111;border-top:1px solid #1f1f1f;border-radius:0 0 10px 10px}
+    .pg-btn{background:#0d0d0d;border:1px solid #2a2a2a;color:#9e9e9e;padding:6px 14px;border-radius:4px;font-size:12px;font-family:inherit;cursor:pointer;transition:all .2s}
+    .pg-btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+    .pg-btn:disabled{opacity:.3;cursor:default}
+    .pg-info{font-size:12px;color:#555;padding:0 12px}
+    .scale-panel{background:#111;border:1px solid #1f1f1f;border-radius:10px;padding:20px;margin-bottom:16px}
+    .scale-panel-title{font-size:11px;letter-spacing:2px;color:#555;text-transform:uppercase;margin-bottom:14px}
+    .scale-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+    @media(max-width:900px){.scale-grid{grid-template-columns:repeat(2,1fr)}}
+    </style>
+    </head>
+    <body>
+    <header class="header">
+      <div class="logo">Y2KS <span>ADMIN</span></div>
+      <div class="header-right">
+        <span class="last-updated" id="last-updated">-</span>
+        <button class="reset-btn" onclick="resetTickets()">티켓 초기화</button>
+        <button class="refresh-btn" onclick="refreshCurrentTab()">새로고침</button>
+      </div>
+    </header>
+    <nav class="tab-nav">
+      <button class="tab-btn active" onclick="switchTab('events')" id="tab-btn-events">이벤트 로그</button>
+      <button class="tab-btn" onclick="switchTab('pods')" id="tab-btn-pods">파드</button>
+      <button class="tab-btn" onclick="switchTab('nodes')" id="tab-btn-nodes">노드</button>
+      <button class="tab-btn" onclick="switchTab('loadtest')" id="tab-btn-loadtest">부하 테스트</button>
+    </nav>
+    
+    <div class="tab-panel active" id="panel-events">
+    <main class="main">
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">남은 티켓</div>
+          <div class="stat-value v-accent" id="s-left">-</div>
+          <div class="stat-sub">/ 100장</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">당첨자</div>
+          <div class="stat-value v-green" id="s-winner">-</div>
+          <div class="stat-sub">쿠폰 발급 완료</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">낙첨자</div>
+          <div class="stat-value v-red" id="s-loser">-</div>
+          <div class="stat-sub">소진 후 참여</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">이메일 발송</div>
+          <div class="stat-value v-blue" id="s-email">-</div>
+          <div class="stat-sub">SES 발송 완료</div>
+        </div>
+      </div>
+      <div class="queue-row">
+        <div class="queue-card">
+          <div class="section-title">SQS 대기열</div>
+          <div class="stat-value v-accent" id="s-queue">-</div>
+          <div class="stat-sub" style="margin-top:8px">대기 중인 메시지</div>
+          <div class="progress-bar"><div class="progress-fill" id="queue-bar" style="width:0%"></div></div>
+        </div>
+        <div class="queue-card">
+          <div class="section-title">처리 중 (In-Flight)</div>
+          <div class="stat-value v-blue" id="s-inflight">-</div>
+          <div class="stat-sub" style="margin-top:8px">Worker 처리 중</div>
+          <div class="progress-bar"><div class="progress-fill" id="inflight-bar" style="width:0%;background:linear-gradient(90deg,var(--blue),#60a5fa)"></div></div>
+        </div>
+      </div>
+      <div class="section-title" id="claims-title">클레임 내역</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Request ID</th>
+              <th>상태</th>
+              <th>쿠폰 코드</th>
+              <th>이메일</th>
+              <th>이메일 발송</th>
+              <th>처리 시각</th>
+            </tr>
+          </thead>
+          <tbody id="claims-body">
+            <tr><td colspan="6" class="empty">로딩 중...</td></tr>
+          </tbody>
+        </table>
+        <div class="pagination">
+          <button class="pg-btn" id="pg-first" onclick="gotoPage(1)">«</button>
+          <button class="pg-btn" id="pg-prev" onclick="gotoPage(currentPage-1)">‹</button>
+          <span class="pg-info" id="pg-info">-</span>
+          <button class="pg-btn" id="pg-next" onclick="gotoPage(currentPage+1)">›</button>
+          <button class="pg-btn" id="pg-last" onclick="gotoPage(totalPages)">»</button>
+        </div>
+      </div>
+    </main>
+    </div>
+    
+    <div class="tab-panel" id="panel-pods">
+    <main class="main">
+      <div class="mon-grid">
+        <div class="stat-card">
+          <div class="stat-label">Worker Pod 수</div>
+          <div class="stat-value v-green" id="s-worker-pods">-</div>
+          <div class="stat-sub">현재 실행 중인 파드</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">KEDA 스케일 범위</div>
+          <div class="stat-value v-accent">1 ~ 50</div>
+          <div class="stat-sub">SQS 큐 기반 자동 스케일</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">SQS 큐 깊이</div>
+          <div class="stat-value v-red" id="s-queue-pods">-</div>
+          <div class="stat-sub">처리 대기 중인 메시지</div>
+        </div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Worker Pod 수 추이 (1시간)</div>
+        <div class="chart-wrap">
+          <canvas id="chart-worker"></canvas>
+          <div class="chart-empty" id="chart-worker-empty">메트릭 수집 중... (Prometheus 연결 확인)</div>
+        </div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Worker Pod 수 vs SQS 큐 깊이 (KEDA 스케일링)</div>
+        <div class="chart-wrap">
+          <canvas id="chart-worker-sqs"></canvas>
+          <div class="chart-empty" id="chart-worker-sqs-empty">메트릭 수집 중... (Prometheus 연결 확인)</div>
+        </div>
+      </div>
+    </main>
+    </div>
+    
+    <div class="tab-panel" id="panel-nodes">
+    <main class="main">
+      <div class="mon-grid">
+        <div class="stat-card">
+          <div class="stat-label">전체 노드 수</div>
+          <div class="stat-value v-accent" id="s-node-count">-</div>
+          <div class="stat-sub">Ready 상태 노드</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Spot 노드 수</div>
+          <div class="stat-value v-purple" id="s-spot-count">-</div>
+          <div class="stat-sub">Karpenter 관리 Spot</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Karpenter</div>
+          <div class="stat-value v-green" style="font-size:20px;padding-top:4px">Auto</div>
+          <div class="stat-sub">노드 자동 프로비저닝</div>
+        </div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">클러스터 노드 수 변화 (Karpenter) - 1시간</div>
+        <div class="chart-wrap">
+          <canvas id="chart-nodes"></canvas>
+          <div class="chart-empty" id="chart-nodes-empty">메트릭 수집 중... (Prometheus 연결 확인)</div>
+        </div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">이벤트 트래픽 RPS (/event · /api/claim)</div>
+        <div class="chart-wrap">
+          <canvas id="chart-rps"></canvas>
+          <div class="chart-empty" id="chart-rps-empty">메트릭 수집 중... (Prometheus 연결 확인)</div>
+        </div>
+      </div>
+    </main>
+    </div>
+    
+    <div class="tab-panel" id="panel-loadtest">
+    <main class="main">
+      <div class="lt-config">
+        <div class="section-title">부하 테스트 — 클러스터 최대 부하 고정 스펙</div>
+        <div class="scale-grid" style="margin-bottom:20px">
+          <div class="stat-card"><div class="stat-label">총 요청 수</div><div class="stat-value v-accent">30000</div><div class="stat-sub">쿠폰 5× 초과 요청</div></div>
+          <div class="stat-card"><div class="stat-label">동시 요청</div><div class="stat-value v-green">500</div><div class="stat-sub">KEDA 최대 Worker 수</div></div>
+          <div class="stat-card"><div class="stat-label">요청 간격</div><div class="stat-value v-blue">0 ms</div><div class="stat-sub">버스트 모드</div></div>
+          <div class="stat-card"><div class="stat-label">KEDA 스케일</div><div class="stat-value v-accent">1 → 50</div><div class="stat-sub">queueLength=5 트리거</div></div>
+        </div>
+        <div style="display:flex;gap:12px">
+          <button class="lt-start-btn" id="lt-start-btn" onclick="startLoadTest()" style="flex:1">&#9654; 최대 부하 테스트 시작</button>
+          <button class="lt-stop-btn" id="lt-stop-btn" onclick="stopLoadTest()" style="flex:1;display:none">&#9632; 중지</button>
+        </div>
+      </div>
+      <div class="lt-stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">총 요청</div>
+          <div class="stat-value v-accent" id="lt-s-total">0</div>
+          <div class="stat-sub" id="lt-s-progress">대기 중</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">성공 (2xx)</div>
+          <div class="stat-value v-green" id="lt-s-success">0</div>
+          <div class="stat-sub" id="lt-s-success-rate">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">실패 / 오류</div>
+          <div class="stat-value v-red" id="lt-s-fail">0</div>
+          <div class="stat-sub">오류 / 타임아웃</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">평균 응답시간</div>
+          <div class="stat-value v-blue" id="lt-s-avg">-</div>
+          <div class="stat-sub">평균 latency</div>
+        </div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">배치별 성공 / 실패 수</div>
+        <div class="chart-wrap">
+          <canvas id="chart-lt"></canvas>
+          <div class="chart-empty" id="chart-lt-empty">테스트를 시작하면 결과가 표시됩니다</div>
+        </div>
+      </div>
+      <div class="scale-panel">
+        <div class="scale-panel-title">실시간 스케일링 현황 (10초 갱신)</div>
+        <div class="scale-grid">
+          <div class="stat-card">
+            <div class="stat-label">Worker Pod</div>
+            <div class="stat-value v-green" id="lt-pod-count">-</div>
+            <div class="stat-sub">KEDA 스케일 중</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">클러스터 노드</div>
+            <div class="stat-value v-accent" id="lt-node-count">-</div>
+            <div class="stat-sub">Karpenter 관리</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">SQS 대기열</div>
+            <div class="stat-value v-red" id="lt-queue-count">-</div>
+            <div class="stat-sub">처리 대기 메시지</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">남은 티켓</div>
+            <div class="stat-value v-blue" id="lt-tickets-left">-</div>
+            <div class="stat-sub">잔여 쿠폰 수</div>
+          </div>
+        </div>
+      </div>
+      <div class="section-title">실시간 로그</div>
+      <div class="lt-log" id="lt-log">
+        <div class="lt-log-line info">테스트를 시작하면 결과가 여기에 표시됩니다.</div>
+      </div>
+    </main>
+    </div>
+    
+    <div class="toast" id="toast"></div>
+    <script>
+    // ── 탭 전환 ──────────────────────────────────────────
+    var currentTab = 'events';
+    var tabTimers = {};
+    
+    function switchTab(name) {
+      document.querySelectorAll('.tab-panel').forEach(function(el){ el.classList.remove('active'); });
+      document.querySelectorAll('.tab-btn').forEach(function(el){ el.classList.remove('active'); });
+      document.getElementById('panel-' + name).classList.add('active');
+      document.getElementById('tab-btn-' + name).classList.add('active');
+      currentTab = name;
+      clearInterval(tabTimers['pods']);
+      clearInterval(tabTimers['nodes']);
+      // 부하 테스트 탭 타이머도 정리
+      if (ltScaleTimer) { clearInterval(ltScaleTimer); ltScaleTimer = null; }
+      if (ltEventTimer) { clearInterval(ltEventTimer); ltEventTimer = null; }
+      if (name === 'pods') {
+        loadPodsTab();
+        tabTimers['pods'] = setInterval(loadPodsTab, 5000);
+      } else if (name === 'nodes') {
+        loadNodesTab();
+        tabTimers['nodes'] = setInterval(loadNodesTab, 5000);
+      }
+    }
+    
+    function refreshCurrentTab() {
+      if (currentTab === 'events') loadAll();
+      else if (currentTab === 'pods') loadPodsTab();
+      else if (currentTab === 'nodes') loadNodesTab();
+    }
+    
+    // ── 토스트 ──────────────────────────────────────────
+    function showToast(msg) {
+      var t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(function(){ t.classList.remove('show'); }, 2500);
+    }
+    
+    // ── 이벤트 로그 탭 ──────────────────────────────────
+    async function loadStats() {
+      try {
+        var res = await fetch('/api/admin/stats');
+        var d = await res.json();
+        document.getElementById('s-left').textContent = d.tickets_left;
+        document.getElementById('s-winner').textContent = d.winner_count;
+        document.getElementById('s-loser').textContent = d.loser_count;
+        document.getElementById('s-email').textContent = d.email_sent_count;
+        document.getElementById('s-queue').textContent = d.queue_depth;
+        document.getElementById('s-inflight').textContent = d.in_flight;
+        document.getElementById('queue-bar').style.width = Math.min(d.queue_depth / 50 * 100, 100) + '%';
+        document.getElementById('inflight-bar').style.width = Math.min(d.in_flight / 50 * 100, 100) + '%';
+        document.getElementById('last-updated').textContent = '업데이트: ' + new Date().toLocaleTimeString('ko-KR');
+        return d;
+      } catch(e) { console.error(e); return null; }
+    }
+    
+    var currentPage = 1;
+    var totalPages = 1;
+    var pageSize = 20;
+    
+    function gotoPage(page) {
+      if (page < 1 || page > totalPages) return;
+      currentPage = page;
+      loadClaims();
+    }
+    
+    async function loadClaims() {
+      try {
+        var res = await fetch('/api/admin/claims?page=' + currentPage + '&limit=' + pageSize);
+        var d = await res.json();
+        totalPages = d.pages || 1;
+        var total = d.total || 0;
+        document.getElementById('pg-prev').disabled = currentPage <= 1;
+        document.getElementById('pg-first').disabled = currentPage <= 1;
+        document.getElementById('pg-next').disabled = currentPage >= totalPages;
+        document.getElementById('pg-last').disabled = currentPage >= totalPages;
+        document.getElementById('pg-info').textContent = currentPage + ' / ' + totalPages + ' 페이지  (총 ' + total + '건)';
+        document.getElementById('claims-title').textContent = '클레임 내역 (총 ' + total + '건)';
+        var tbody = document.getElementById('claims-body');
+        if (!d.items || d.items.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="6" class="empty">데이터가 없습니다</td></tr>';
+          return;
+        }
+        tbody.innerHTML = d.items.map(function(item) {
+          var statusBadge = item.status === 'winner'
+            ? '<span class="badge b-winner">당첨</span>'
+            : '<span class="badge b-loser">낙첨</span>';
+          var emailSent = item.email_sent
+            ? '<span class="badge b-sent">발송완료</span>'
+            : '<span class="badge b-pending">미발송</span>';
+          var coupon = item.coupon_code || '-';
+          var email = item.email || '-';
+          var time = item.claimed_at ? item.claimed_at.replace('T', ' ').substring(0, 19) : '-';
+          var shortId = item.request_id ? item.request_id.substring(0, 8) + '...' : '-';
+          return '<tr><td style="font-family:monospace;font-size:12px;color:#666" title="' + item.request_id + '">' + shortId + '</td><td>' + statusBadge + '</td><td style="font-family:monospace;letter-spacing:2px;color:var(--accent)">' + coupon + '</td><td style="color:#888">' + email + '</td><td>' + emailSent + '</td><td style="color:#555;font-size:12px">' + time + '</td></tr>';
+        }).join('');
+      } catch(e) { console.error(e); }
+    }
+    
+    async function loadAll() {
+      await Promise.all([loadStats(), loadClaims()]);
+    }
+    
+    async function resetTickets() {
+      if (!confirm('티켓을 100장으로 초기화하시겠습니까?')) return;
+      try {
+        var res = await fetch('/api/admin/reset', {method: 'POST'});
+        var d = await res.json();
+        showToast(d.message);
+        loadStats();
+      } catch(e) { showToast('초기화 실패'); }
+    }
+    
+    loadAll();
+    setInterval(loadAll, 15000);
+    
+    // ── Prometheus 헬퍼 ──────────────────────────────────
+    var CHART_DEFAULTS = {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      plugins: { legend: { labels: { color: '#9e9e9e', font: { family: 'Outfit', size: 11 } } } },
+      scales: {
+        x: { ticks: { color: '#555', maxTicksLimit: 8, font: { size: 10 } }, grid: { color: '#1f1f1f' } },
+        y: { ticks: { color: '#555', font: { size: 10 } }, grid: { color: '#1f1f1f' } }
+      }
+    };
+    
+    function tsToLabel(ts) {
+      return new Date(ts * 1000).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+    }
+    
+    async function fetchRange(query, start, end, step) {
+      try {
+        var res = await fetch('/api/admin/metrics?query=' + encodeURIComponent(query) +
+          '&start=' + start + '&end=' + end + '&step=' + step);
+        if (!res.ok) return null;
+        var d = await res.json();
+        return (d.status === 'success' && d.data.result.length > 0) ? d.data.result : null;
+      } catch(e) { return null; }
+    }
+    
+    async function fetchInstant(query) {
+      try {
+        var res = await fetch('/api/admin/metrics/instant?query=' + encodeURIComponent(query));
+        if (!res.ok) return null;
+        var d = await res.json();
+        if (d.status === 'success' && d.data.result.length > 0) return d.data.result[0].value[1];
+        return null;
+      } catch(e) { return null; }
+    }
+    
+    function showEmpty(id, show) {
+      var el = document.getElementById(id);
+      if (el) el.style.display = show ? 'flex' : 'none';
+    }
+    
+    // ── 파드 탭 ──────────────────────────────────────────
+    var chartWorker = null, chartWorkerSqs = null;
+    var sqsHistory = [];   // {ts, label, val}
+    var podsHistory = [];  // {ts, label, val} - K8s API 폴링으로 누적
+    var HISTORY_MAX = 120; // 최대 120개 (30초 간격 × 120 = 1시간)
+
+    // 30초마다 K8s API 폴링 → podsHistory / nodesHistory 누적
+    var podsCollectTimer = setInterval(async function() {
+      try {
+        var r = await fetch('/api/admin/k8s');
+        var d = await r.json();
+        var now = Math.floor(Date.now() / 1000);
+        var label = tsToLabel(now);
+        podsHistory.push({ ts: now, label: label, val: d.worker_pods || 0 });
+        if (podsHistory.length > HISTORY_MAX) podsHistory.shift();
+        nodesHistory.push({ ts: now, label: label, all: d.nodes_ready || 0, spot: d.nodes_spot || 0 });
+        if (nodesHistory.length > HISTORY_MAX) nodesHistory.shift();
+      } catch(e) {}
+    }, 30000);
+
+    async function loadPodsTab() {
+      var now = Math.floor(Date.now() / 1000);
+      var start = now - 3600;
+
+      try {
+        var k8sRes = await fetch('/api/admin/k8s');
+        var k8sData = await k8sRes.json();
+        document.getElementById('s-worker-pods').textContent = k8sData.worker_pods + ' / ' + k8sData.worker_desired;
+        // 현재 값을 히스토리에 즉시 추가
+        var label = tsToLabel(now);
+        podsHistory.push({ ts: now, label: label, val: k8sData.worker_pods || 0 });
+        if (podsHistory.length > HISTORY_MAX) podsHistory.shift();
+      } catch(e) {
+        var pods = await fetchInstant('kube_deployment_status_replicas{deployment="concert-worker"}');
+        if (pods !== null) document.getElementById('s-worker-pods').textContent = Math.round(pods);
+      }
+
+      var statsData = await loadStats();
+      if (statsData) document.getElementById('s-queue-pods').textContent = statsData.queue_depth;
+
+      // Prometheus 먼저 시도, 실패 시 podsHistory로 차트 구성
+      var workerData = await fetchRange('kube_deployment_status_replicas{deployment="concert-worker"}', start, now, '30s');
+      if (!workerData && podsHistory.length > 1) {
+        // K8s API 폴링 데이터로 가짜 workerData 구성
+        workerData = [{ values: podsHistory.map(function(h){ return [h.ts, String(h.val)]; }) }];
+      }
+      if (workerData && workerData[0]) {
+        showEmpty('chart-worker-empty', false);
+        var wLabels = workerData[0].values.map(function(v){ return tsToLabel(v[0]); });
+        var wData = workerData[0].values.map(function(v){ return parseFloat(v[1]); });
+        if (!chartWorker) {
+          chartWorker = new Chart(document.getElementById('chart-worker'), {
+            type: 'line',
+            data: { labels: wLabels, datasets: [
+              { label: 'Worker Pod 수', data: wData, borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.08)', tension: 0.3, pointRadius: 0, fill: true }
+            ]},
+            options: CHART_DEFAULTS
+          });
+        } else {
+          chartWorker.data.labels = wLabels;
+          chartWorker.data.datasets[0].data = wData;
+          chartWorker.update();
+        }
+    
+        // SQS 히스토리 누적 (30초마다 현재값 저장, 최대 120개 = 1시간)
+        if (statsData) {
+          sqsHistory.push({ ts: now, val: statsData.queue_depth });
+          if (sqsHistory.length > 120) sqsHistory.shift();
+        }
+        // Worker Pod 타임스탬프에 가장 가까운 SQS 값 매핑
+        var sqsData = workerData[0].values.map(function(v) {
+          if (sqsHistory.length === 0) return null;
+          var closest = sqsHistory.reduce(function(a, b) {
+            return Math.abs(b.ts - v[0]) < Math.abs(a.ts - v[0]) ? b : a;
+          });
+          return Math.abs(closest.ts - v[0]) < 90 ? closest.val : null;
+        });
+        showEmpty('chart-worker-sqs-empty', false);
+        if (!chartWorkerSqs) {
+          chartWorkerSqs = new Chart(document.getElementById('chart-worker-sqs'), {
+            type: 'line',
+            data: { labels: wLabels, datasets: [
+              { label: 'Worker Pod 수', data: wData, borderColor: '#22c55e', tension: 0.3, pointRadius: 0, yAxisID: 'y' },
+              { label: 'SQS 큐 깊이', data: sqsData, borderColor: '#ef4444', tension: 0.3, pointRadius: 4, yAxisID: 'y1', spanGaps: false }
+            ]},
+            options: {
+              responsive: true, maintainAspectRatio: false, animation: false,
+              plugins: { legend: { labels: { color: '#9e9e9e', font: { family: 'Outfit', size: 11 } } } },
+              scales: {
+                x: { ticks: { color: '#555', maxTicksLimit: 8, font: { size: 10 } }, grid: { color: '#1f1f1f' } },
+                y: { position: 'left', ticks: { color: '#555', font: { size: 10 } }, grid: { color: '#1f1f1f' }, title: { display: true, text: 'Pod 수', color: '#555', font: { size: 10 } } },
+                y1: { position: 'right', grid: { drawOnChartArea: false }, ticks: { color: '#555', font: { size: 10 } }, title: { display: true, text: 'SQS 메시지', color: '#555', font: { size: 10 } } }
+              }
+            }
+          });
+        } else {
+          chartWorkerSqs.data.labels = wLabels;
+          chartWorkerSqs.data.datasets[0].data = wData;
+          chartWorkerSqs.data.datasets[1].data = sqsData;
+          chartWorkerSqs.update();
+        }
+      } else {
+        showEmpty('chart-worker-empty', true);
+        showEmpty('chart-worker-sqs-empty', true);
+      }
+    }
+    
+    // ── 노드 탭 ──────────────────────────────────────────
+    var chartNodes = null, chartRps = null;
+    var nodesHistory = []; // {ts, label, all, spot} - K8s API 폴링으로 누적
+
+    async function loadNodesTab() {
+      var now = Math.floor(Date.now() / 1000);
+      var start = now - 3600;
+
+      try {
+        var k8sRes = await fetch('/api/admin/k8s');
+        var k8sData = await k8sRes.json();
+        document.getElementById('s-node-count').textContent = k8sData.nodes_ready;
+        document.getElementById('s-spot-count').textContent = k8sData.nodes_spot;
+        // 현재 값을 히스토리에 즉시 추가
+        var label = tsToLabel(now);
+        nodesHistory.push({ ts: now, label: label, all: k8sData.nodes_ready || 0, spot: k8sData.nodes_spot || 0 });
+        if (nodesHistory.length > HISTORY_MAX) nodesHistory.shift();
+      } catch(e) {
+        var nodes = await fetchInstant('sum(kube_node_status_condition{condition="Ready",status="true"})');
+        if (nodes !== null) document.getElementById('s-node-count').textContent = Math.round(nodes);
+        var spot = await fetchInstant('count(kube_node_info{provider_id=~"aws:.*"} * on(node) kube_node_status_condition{condition="Ready",status="true"})');
+        document.getElementById('s-spot-count').textContent = spot !== null ? Math.round(spot) : '-';
+      }
+
+      // Prometheus 먼저 시도, 실패 시 nodesHistory로 차트 구성
+      var nodeAll = await fetchRange('sum(kube_node_status_condition{condition="Ready",status="true"})', start, now, '30s');
+      var nodeSpot = await fetchRange('count(kube_node_info{provider_id=~"aws:.*"} * on(node) kube_node_status_condition{condition="Ready",status="true"})', start, now, '30s');
+      if (!nodeAll && nodesHistory.length > 1) {
+        nodeAll = [{ values: nodesHistory.map(function(h){ return [h.ts, String(h.all)]; }) }];
+        nodeSpot = [{ values: nodesHistory.map(function(h){ return [h.ts, String(h.spot)]; }) }];
+      }
+      if (nodeAll && nodeAll[0]) {
+        showEmpty('chart-nodes-empty', false);
+        var nLabels = nodeAll[0].values.map(function(v){ return tsToLabel(v[0]); });
+        var nAll = nodeAll[0].values.map(function(v){ return parseFloat(v[1]); });
+        var nSpot = (nodeSpot && nodeSpot[0]) ? nodeSpot[0].values.map(function(v){ return parseFloat(v[1]); }) : [];
+        if (!chartNodes) {
+          chartNodes = new Chart(document.getElementById('chart-nodes'), {
+            type: 'line',
+            data: { labels: nLabels, datasets: [
+              { label: '전체 Ready 노드', data: nAll, borderColor: '#c8a96e', backgroundColor: 'rgba(200,169,110,0.08)', tension: 0.3, pointRadius: 0, fill: true },
+              { label: 'Spot 노드', data: nSpot, borderColor: '#a78bfa', tension: 0.3, pointRadius: 0, borderDash: [4, 4] }
+            ]},
+            options: CHART_DEFAULTS
+          });
+        } else {
+          chartNodes.data.labels = nLabels;
+          chartNodes.data.datasets[0].data = nAll;
+          chartNodes.data.datasets[1].data = nSpot;
+          chartNodes.update();
+        }
+      } else { showEmpty('chart-nodes-empty', true); }
+    
+      // RPS 차트: endpoint 라벨 먼저 시도, 실패하면 path 라벨 fallback
+      var rpsEvent = await fetchRange('rate(flask_http_request_duration_seconds_count{url_rule="/event"}[1m])', start, now, '15s');
+      var rpsClaim = await fetchRange('rate(flask_http_request_duration_seconds_count{url_rule="/api/claim"}[1m])', start, now, '15s');
+      if (!rpsEvent) rpsEvent = await fetchRange('rate(flask_http_request_duration_seconds_count{url_rule="/event"}[1m])', start, now, '15s');
+      if (!rpsClaim) rpsClaim = await fetchRange('rate(flask_http_request_duration_seconds_count{url_rule="/api/claim"}[1m])', start, now, '15s');
+      if (rpsEvent || rpsClaim) {
+        showEmpty('chart-rps-empty', false);
+        var labels = (rpsEvent && rpsEvent[0]) ? rpsEvent[0].values.map(function(v){ return tsToLabel(v[0]); }) :
+                     (rpsClaim && rpsClaim[0]) ? rpsClaim[0].values.map(function(v){ return tsToLabel(v[0]); }) : [];
+        var ds1 = (rpsEvent && rpsEvent[0]) ? rpsEvent[0].values.map(function(v){ return parseFloat(v[1]); }) : [];
+        var ds2 = (rpsClaim && rpsClaim[0]) ? rpsClaim[0].values.map(function(v){ return parseFloat(v[1]); }) : [];
+        if (!chartRps) {
+          chartRps = new Chart(document.getElementById('chart-rps'), {
+            type: 'line',
+            data: { labels: labels, datasets: [
+              { label: '/event RPS', data: ds1, borderColor: '#c8a96e', backgroundColor: 'rgba(200,169,110,0.06)', tension: 0.3, pointRadius: 0, fill: true },
+              { label: '/api/claim RPS', data: ds2, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.06)', tension: 0.3, pointRadius: 0, fill: true }
+            ]},
+            options: CHART_DEFAULTS
+          });
+        } else {
+          chartRps.data.labels = labels;
+          chartRps.data.datasets[0].data = ds1;
+          chartRps.data.datasets[1].data = ds2;
+          chartRps.update();
+        }
+      } else { showEmpty('chart-rps-empty', true); }
+    }
+    
+    // ── 부하 테스트 탭 ──────────────────────────────────
+    var ltRunning = false;
+    var ltStopped = false;
+    var ltStats = { total: 0, success: 0, fail: 0, times: [] };
+    var ltTarget = 0;
+    var chartLt = null;
+    var ltChartData = { labels: [], success: [], fail: [] };
+    var ltScaleTimer = null;
+    var ltEventTimer = null;
+    
+    async function pollScalingStatus() {
+      try {
+        var k8sRes = await fetch('/api/admin/k8s');
+        var k8s = await k8sRes.json();
+        document.getElementById('lt-pod-count').textContent = k8s.worker_pods + ' / ' + k8s.worker_desired;
+        document.getElementById('lt-node-count').textContent = k8s.nodes_ready;
+      } catch(e) {}
+      try {
+        var sRes = await fetch('/api/admin/stats');
+        var sd = await sRes.json();
+        document.getElementById('lt-queue-count').textContent = sd.queue_depth;
+        document.getElementById('lt-tickets-left').textContent = sd.tickets_left;
+      } catch(e) {}
+    }
+    
+    function ltLog(msg, type) {
+      var log = document.getElementById('lt-log');
+      var line = document.createElement('div');
+      line.className = 'lt-log-line ' + (type || 'info');
+      line.textContent = new Date().toLocaleTimeString('ko-KR') + '  ' + msg;
+      log.insertBefore(line, log.firstChild);
+      if (log.children.length > 200) log.removeChild(log.lastChild);
+    }
+    
+    function ltUpdateUI() {
+      document.getElementById('lt-s-total').textContent = ltStats.total;
+      document.getElementById('lt-s-success').textContent = ltStats.success;
+      document.getElementById('lt-s-fail').textContent = ltStats.fail;
+      var avg = ltStats.times.length > 0 ? Math.round(ltStats.times.reduce(function(a,b){return a+b;},0) / ltStats.times.length) : 0;
+      document.getElementById('lt-s-avg').textContent = ltStats.times.length > 0 ? avg + 'ms' : '-';
+      var pct = ltTarget > 0 ? Math.round(ltStats.total / ltTarget * 100) : 0;
+      document.getElementById('lt-s-progress').textContent = ltStats.total + ' / ' + ltTarget + ' (' + pct + '%)';
+      var rate = ltStats.total > 0 ? Math.round(ltStats.success / ltStats.total * 100) : 0;
+      document.getElementById('lt-s-success-rate').textContent = '성공률 ' + rate + '%';
+    }
+    
+    function ltUpdateChart(batchSuccess, batchFail) {
+      var now = new Date().toLocaleTimeString('ko-KR', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      ltChartData.labels.push(now);
+      ltChartData.success.push(batchSuccess);
+      ltChartData.fail.push(batchFail);
+      if (ltChartData.labels.length > 60) {
+        ltChartData.labels.shift();
+        ltChartData.success.shift();
+        ltChartData.fail.shift();
+      }
+      if (!chartLt) {
+        showEmpty('chart-lt-empty', false);
+        chartLt = new Chart(document.getElementById('chart-lt'), {
+          type: 'bar',
+          data: {
+            labels: ltChartData.labels,
+            datasets: [
+              { label: '성공', data: ltChartData.success, backgroundColor: 'rgba(34,197,94,0.5)', borderColor: '#22c55e', borderWidth: 1 },
+              { label: '실패', data: ltChartData.fail, backgroundColor: 'rgba(239,68,68,0.5)', borderColor: '#ef4444', borderWidth: 1 }
+            ]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false, animation: false,
+            plugins: { legend: { labels: { color: '#9e9e9e', font: { family: 'Outfit', size: 11 } } } },
+            scales: {
+              x: { stacked: true, ticks: { color: '#555', font: { size: 9 }, maxRotation: 0, maxTicksLimit: 10 }, grid: { color: '#1f1f1f' } },
+              y: { stacked: true, ticks: { color: '#555', font: { size: 10 } }, grid: { color: '#1f1f1f' } }
+            }
+          }
+        });
+      } else {
+        chartLt.data.labels = ltChartData.labels;
+        chartLt.data.datasets[0].data = ltChartData.success;
+        chartLt.data.datasets[1].data = ltChartData.fail;
+        chartLt.update('none');
+      }
+    }
+    
+    async function startLoadTest() {
+      var concurrency = 500;
+      var total = 30000;
+      var interval = 0;
+    
+      ltRunning = true;
+      ltStopped = false;
+      ltStats = { total: 0, success: 0, fail: 0, times: [] };
+      ltTarget = total;
+      ltChartData = { labels: [], success: [], fail: [] };
+      if (chartLt) { chartLt.destroy(); chartLt = null; }
+      showEmpty('chart-lt-empty', true);
+    
+      document.getElementById('lt-start-btn').disabled = true;
+      document.getElementById('lt-stop-btn').style.display = 'block';
+      document.getElementById('lt-log').innerHTML = '';
+      ltLog('부하 테스트 시작 — 동시 ' + concurrency + '명 / 총 ' + total + '회 / 버스트 모드', 'info');
+    
+      // 스케일링 상태 실시간 폴링 시작 (5초 간격)
+      pollScalingStatus();
+      ltScaleTimer = setInterval(pollScalingStatus, 5000);
+      // 이벤트 로그 통계 실시간 갱신 (5초 간격)
+      ltEventTimer = setInterval(loadStats, 5000);
+      ltUpdateUI();
+    
+      var sent = 0;
+    
+      async function runBatch() {
+        if (ltStopped || sent >= total) {
+          ltRunning = false;
+          document.getElementById('lt-start-btn').disabled = false;
+          document.getElementById('lt-stop-btn').style.display = 'none';
+          if (ltScaleTimer) { clearInterval(ltScaleTimer); ltScaleTimer = null; }
+          if (ltEventTimer) { clearInterval(ltEventTimer); ltEventTimer = null; }
+          ltLog('테스트 완료 — 성공: ' + ltStats.success + ' / 실패: ' + ltStats.fail + ' / 평균: ' + (ltStats.times.length > 0 ? Math.round(ltStats.times.reduce(function(a,b){return a+b;},0)/ltStats.times.length) : 0) + 'ms', 'info');
+          pollScalingStatus(); // 최종 상태 갱신
+          return;
+        }
+    
+        var batchSize = Math.min(concurrency, total - sent);
+        sent += batchSize;
+        var batchSuccess = 0, batchFail = 0;
+    
+        var promises = Array.from({length: batchSize}, function() {
+          return (async function() {
+            var t0 = Date.now();
+            try {
+              var res = await fetch('/api/claim', { method: 'POST' });
+              var elapsed = Date.now() - t0;
+              ltStats.times.push(elapsed);
+              if (res.ok) {
+                ltStats.success++; batchSuccess++;
+              } else {
+                ltStats.fail++; batchFail++;
+                var body = {};
+                try { body = await res.json(); } catch(e2) {}
+                ltLog('HTTP ' + res.status + ' — ' + (body.message || body.error || res.statusText), 'fail');
+              }
+            } catch(e) {
+              ltStats.fail++; batchFail++;
+              ltLog('네트워크 오류 — ' + e.message, 'fail');
+            }
+            ltStats.total++;
+          })();
+        });
+    
+        await Promise.all(promises);
+        ltUpdateUI();
+        ltUpdateChart(batchSuccess, batchFail);
+        if (batchFail > 0)
+          ltLog('배치 완료 — 성공: ' + batchSuccess + ' 실패: ' + batchFail, 'fail');
+        else
+          ltLog('배치 완료 — 성공: ' + batchSuccess, 'success');
+    
+        setTimeout(runBatch, Math.max(interval, 10));
+      }
+    
+      runBatch();
+    }
+    
+    function stopLoadTest() {
+      ltStopped = true;
+      if (ltScaleTimer) { clearInterval(ltScaleTimer); ltScaleTimer = null; }
+      if (ltEventTimer) { clearInterval(ltEventTimer); ltEventTimer = null; }
+      document.getElementById('lt-start-btn').disabled = false;
+      document.getElementById('lt-stop-btn').style.display = 'none';
+      ltLog('테스트 중지됨 (총 ' + ltStats.total + '개 요청 완료)', 'info');
+      pollScalingStatus();
+    }
+    </script>
+    </body>
+    </html>
+    
+  event.html: |
+    <!DOCTYPE html>
+    <html lang="ko">
+    <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>쿠폰 이벤트 - Y2KS</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+    <style>
+    *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+    :root{--black:#0a0a0a;--white:#fff;--accent:#c8a96e;--accent-d:#a8803e;--g200:#e8e8e8}
+    body{font-family:'Nanum Gothic',sans-serif;background:var(--black);color:#fff;min-height:100vh}
+    a{text-decoration:none;color:inherit}
+    .header{display:flex;align-items:center;justify-content:space-between;padding:20px 48px;border-bottom:1px solid rgba(255,255,255,.08)}
+    .logo{font-family:'Outfit',sans-serif;font-size:26px;font-weight:800;letter-spacing:8px}
+    .back{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:rgba(255,255,255,.5);transition:color .2s;padding:8px 0}
+    .back:hover{color:var(--accent)}
+    .hero{text-align:center;padding:80px 40px 60px;position:relative;overflow:hidden}
+    .hero::before{content:'';position:absolute;top:-100px;left:50%;transform:translateX(-50%);width:700px;height:700px;background:radial-gradient(circle,rgba(200,169,110,.12) 0%,transparent 65%);pointer-events:none}
+    .hero-label{font-family:'Outfit',sans-serif;font-size:11px;letter-spacing:5px;color:var(--accent);font-weight:600;margin-bottom:20px}
+    .hero-title{font-family:'Outfit',sans-serif;font-size:58px;font-weight:800;line-height:1.1;letter-spacing:-2px;margin-bottom:16px}
+    .hero-title span{color:var(--accent)}
+    .hero-sub{font-size:15px;color:rgba(255,255,255,.5);margin-bottom:40px;line-height:1.7}
+    .ticket-badge{display:inline-flex;align-items:center;gap:10px;background:rgba(200,169,110,.12);border:1px solid rgba(200,169,110,.3);border-radius:50px;padding:12px 28px;margin-bottom:56px}
+    .tb-label{font-size:12px;color:rgba(255,255,255,.5);letter-spacing:1px}
+    .tb-count{font-family:'Outfit',sans-serif;font-size:22px;font-weight:700;color:var(--accent)}
+    .card{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:48px;max-width:520px;margin:0 auto;backdrop-filter:blur(10px)}
+    /* States */
+    .state{display:none}
+    .state.active{display:block}
+    /* Idle state */
+    .idle-icon{font-size:56px;margin-bottom:20px}
+    .idle-title{font-size:22px;font-weight:700;margin-bottom:10px}
+    .idle-sub{font-size:13px;color:rgba(255,255,255,.45);margin-bottom:36px;line-height:1.7}
+    .claim-btn{width:100%;padding:20px;background:linear-gradient(135deg,var(--accent),var(--accent-d));color:#fff;font-size:17px;font-weight:700;border:none;border-radius:10px;cursor:pointer;letter-spacing:1px;transition:all .3s;font-family:inherit}
+    .claim-btn:hover{transform:translateY(-3px);box-shadow:0 12px 32px rgba(200,169,110,.35)}
+    .claim-btn:active{transform:translateY(0)}
+    .claim-btn:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none}
+    /* Loading state */
+    .spinner{width:52px;height:52px;border:3px solid rgba(200,169,110,.2);border-top-color:var(--accent);border-radius:50%;animation:spin 0.9s linear infinite;margin:0 auto 24px}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .loading-title{font-size:18px;font-weight:700;margin-bottom:10px}
+    .loading-sub{font-size:13px;color:rgba(255,255,255,.45);line-height:1.7}
+    /* Winner state */
+    .confetti-wrap{position:fixed;inset:0;pointer-events:none;z-index:999;overflow:hidden}
+    .confetti{position:absolute;width:10px;height:10px;border-radius:2px;animation:fall linear forwards}
+    @keyframes fall{0%{transform:translateY(-20px) rotate(0deg);opacity:1}100%{transform:translateY(110vh) rotate(720deg);opacity:0}}
+    .winner-icon{font-size:64px;margin-bottom:16px;animation:bounce .6s ease}
+    @keyframes bounce{0%,100%{transform:scale(1)}50%{transform:scale(1.2)}}
+    .winner-title{font-size:26px;font-weight:800;color:var(--accent);margin-bottom:10px}
+    .winner-sub{font-size:13px;color:rgba(255,255,255,.5);margin-bottom:32px;line-height:1.7}
+    .email-form{display:flex;flex-direction:column;gap:12px}
+    .email-input{padding:15px 18px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);border-radius:8px;color:#fff;font-size:14px;font-family:inherit;outline:none;transition:border-color .2s}
+    .email-input:focus{border-color:var(--accent)}
+    .email-input::placeholder{color:rgba(255,255,255,.3)}
+    .submit-btn{padding:15px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;transition:all .3s;font-family:inherit}
+    .submit-btn:hover{background:var(--accent-d);transform:translateY(-2px)}
+    .submit-btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+    /* Loser state */
+    .loser-icon{font-size:56px;margin-bottom:20px}
+    .loser-title{font-size:22px;font-weight:700;margin-bottom:10px}
+    .loser-sub{font-size:13px;color:rgba(255,255,255,.45);margin-bottom:28px;line-height:1.7}
+    .retry-btn{display:inline-block;padding:12px 32px;border:1px solid rgba(255,255,255,.2);border-radius:8px;font-size:14px;color:rgba(255,255,255,.7);transition:all .2s;cursor:pointer;font-family:inherit;background:none}
+    .retry-btn:hover{border-color:var(--accent);color:var(--accent)}
+    /* Done state */
+    .done-icon{font-size:56px;margin-bottom:20px}
+    .done-title{font-size:22px;font-weight:700;color:var(--accent);margin-bottom:10px}
+    .done-sub{font-size:13px;color:rgba(255,255,255,.45);margin-bottom:16px;line-height:1.7}
+    .coupon-code{font-family:'Outfit',sans-serif;font-size:28px;font-weight:800;letter-spacing:6px;color:#fff;background:rgba(200,169,110,.1);border:1px dashed rgba(200,169,110,.4);padding:18px 24px;border-radius:8px;margin:20px 0}
+    /* Error */
+    .error-msg{font-size:12px;color:#ef5350;margin-top:6px;text-align:center}
+    </style>
+    </head>
+    <body>
+    <header class="header">
+      <div class="logo">Y2KS</div>
+      <a href="/" class="back">← 쇼핑몰로 돌아가기</a>
+    </header>
+
+    <div class="confetti-wrap" id="confetti-wrap"></div>
+
+    <section class="hero">
+      <div class="hero-label">LIMITED COUPON EVENT</div>
+      <h1 class="hero-title">봄맞이 특별 쿠폰<br><span>100장</span> 무료 증정</h1>
+      <p class="hero-sub">선착순으로 80% 할인 쿠폰을 드립니다.<br>버튼을 눌러 지금 바로 참여하세요!</p>
+      <div class="ticket-badge">
+        <span class="tb-label">남은 쿠폰</span>
+        <span class="tb-count" id="ticket-count">- / 100</span>
+      </div>
+
+      <div class="card">
+        <!-- IDLE -->
+        <div class="state active" id="state-idle">
+          <div class="idle-icon">🎁</div>
+          <div class="idle-title">쿠폰 받기</div>
+          <div class="idle-sub">버튼을 클릭하면 대기열에 등록됩니다.<br>처리 후 당첨 여부를 알려드립니다.</div>
+          <button class="claim-btn" id="claim-btn" onclick="claimCoupon()">지금 쿠폰 받기</button>
+        </div>
+
+        <!-- LOADING -->
+        <div class="state" id="state-loading">
+          <div class="spinner"></div>
+          <div class="loading-title">대기열에서 처리 중입니다...</div>
+          <div class="loading-sub">잠시만 기다려주세요.<br>자동으로 결과를 확인하고 있습니다.</div>
+        </div>
+
+        <!-- WINNER -->
+        <div class="state" id="state-winner">
+          <div class="winner-icon">🎉</div>
+          <div class="winner-title">축하합니다! 당첨되셨습니다!</div>
+          <div class="winner-sub">80% 할인 쿠폰이 발급되었습니다.<br>이메일을 입력하시면 쿠폰 코드를 보내드립니다.</div>
+          <div class="email-form">
+            <input class="email-input" type="email" id="email-input" placeholder="이메일 주소를 입력하세요">
+            <button class="submit-btn" id="submit-btn" onclick="submitEmail()">쿠폰 이메일로 받기</button>
+            <div class="error-msg" id="email-error"></div>
+          </div>
+        </div>
+
+        <!-- LOSER -->
+        <div class="state" id="state-loser">
+          <div class="loser-icon">😢</div>
+          <div class="loser-title">아쉽게도 이번엔 놓쳤어요</div>
+          <div class="loser-sub">쿠폰이 모두 소진되었습니다.<br>다음 이벤트에서 꼭 성공하시길 바랍니다!</div>
+          <a href="/" class="retry-btn">← 쇼핑 계속하기</a>
+        </div>
+
+        <!-- DONE -->
+        <div class="state" id="state-done">
+          <div class="done-icon">✅</div>
+          <div class="done-title">이메일 발송 완료!</div>
+          <div class="done-sub">쿠폰 코드를 이메일로 보내드렸습니다.<br>받은 편지함을 확인해 주세요.</div>
+          <div class="coupon-code" id="coupon-display"></div>
+          <div style="font-size:12px;color:rgba(255,255,255,.35);margin-top:8px;">유효기간: 2026년 6월 30일까지</div>
+          <br><a href="/" class="retry-btn" style="margin-top:16px">← 쇼핑 계속하기</a>
+        </div>
+      </div>
+    </section>
+
+    <script>
+    let currentRequestId = null;
+    let pollInterval = null;
+
+    function setState(name) {
+      document.querySelectorAll('.state').forEach(function(el) { el.classList.remove('active'); });
+      var el = document.getElementById('state-' + name);
+      if (el) el.classList.add('active');
+    }
+
+    function updateTicketCount() {
+      fetch('/api/tickets').then(function(r){ return r.json(); }).then(function(d){
+        document.getElementById('ticket-count').textContent = d.remaining + ' / 100';
+      }).catch(function(){});
+    }
+
+    async function claimCoupon() {
+      var btn = document.getElementById('claim-btn');
+      btn.disabled = true;
+      setState('loading');
+      try {
+        var res = await fetch('/api/claim', {method:'POST'});
+        var data = await res.json();
+        currentRequestId = data.request_id;
+        pollInterval = setInterval(pollResult, 2000);
+      } catch(e) {
+        setState('idle');
+        btn.disabled = false;
+        alert('오류가 발생했습니다. 다시 시도해주세요.');
+      }
+    }
+
+    async function pollResult() {
+      try {
+        var res = await fetch('/api/check/' + currentRequestId);
+        var data = await res.json();
+        if (data.status === 'winner') {
+          clearInterval(pollInterval);
+          setState('winner');
+          launchConfetti();
+          updateTicketCount();
+        } else if (data.status === 'loser') {
+          clearInterval(pollInterval);
+          setState('loser');
+          updateTicketCount();
+        }
+      } catch(e) { console.error('poll error', e); }
+    }
+
+    async function submitEmail() {
+      var email = document.getElementById('email-input').value;
+      var errEl = document.getElementById('email-error');
+      var btn = document.getElementById('submit-btn');
+      errEl.textContent = '';
+      if (!email || !email.includes('@')) {
+        errEl.textContent = '올바른 이메일 주소를 입력해주세요.';
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = '발송 중...';
+      try {
+        var res = await fetch('/api/submit-email', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({request_id: currentRequestId, email: email})
+        });
+        var data = await res.json();
+        if (data.success) {
+          document.getElementById('coupon-display').textContent = data.coupon;
+          setState('done');
+        } else {
+          errEl.textContent = data.message || '오류가 발생했습니다.';
+          btn.disabled = false;
+          btn.textContent = '쿠폰 이메일로 받기';
+        }
+      } catch(e) {
+        errEl.textContent = '네트워크 오류가 발생했습니다.';
+        btn.disabled = false;
+        btn.textContent = '쿠폰 이메일로 받기';
+      }
+    }
+
+    function launchConfetti() {
+      var wrap = document.getElementById('confetti-wrap');
+      var colors = ['#c8a96e','#fff','#f9d423','#ff6b9d','#a8edea','#fed6e3'];
+      for (var i = 0; i < 80; i++) {
+        (function(i) {
+          setTimeout(function() {
+            var el = document.createElement('div');
+            el.className = 'confetti';
+            el.style.left = Math.random() * 100 + 'vw';
+            el.style.background = colors[Math.floor(Math.random() * colors.length)];
+            el.style.width = (Math.random() * 8 + 6) + 'px';
+            el.style.height = (Math.random() * 8 + 6) + 'px';
+            el.style.borderRadius = Math.random() > 0.5 ? '50%' : '2px';
+            el.style.animationDuration = (Math.random() * 2 + 2) + 's';
+            el.style.animationDelay = '0s';
+            wrap.appendChild(el);
+            setTimeout(function() { el.remove(); }, 4000);
+          }, i * 30);
+        })(i);
+      }
+    }
+
+    updateTicketCount();
+    setInterval(updateTicketCount, 10000);
+    </script>
+    </body>
+    </html>
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: concert-frontend
+  labels:
+    app: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "5000"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: worker-sa
+      priorityClassName: modo-high
+      containers:
+      - name: web
+        image: python:3.9-slim
+        command: ["/bin/sh", "-c"]
+        args: ["pip install flask boto3 redis gunicorn prometheus-flask-exporter requests && gunicorn --bind 0.0.0.0:5000 --workers 2 --chdir /app app:app"]
+        ports:
+        - containerPort: 5000
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 5000
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 5000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: 100m
+            memory: 200Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        env:
+        - name: PROMETHEUS_URL
+          value: "http://prometheus-server.monitoring.svc.cluster.local:80"
+        - name: SQS_QUEUE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: aws-config
+              key: SQS_QUEUE_URL
+        - name: AWS_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: aws-config
+              key: AWS_REGION
+        - name: DDB_TABLE
+          valueFrom:
+            configMapKeyRef:
+              name: aws-config
+              key: DDB_TABLE
+        volumeMounts:
+        - name: code-volume
+          mountPath: /app
+      volumes:
+      - name: code-volume
+        configMap:
+          name: concert-app-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: concert-frontend-svc
+spec:
+  type: LoadBalancer
+  selector:
+    app: frontend
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 5000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: concert-worker
+  labels:
+    app: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      serviceAccountName: worker-sa
+      priorityClassName: modo-normal
+      containers:
+      - name: worker
+        image: python:3.9-slim
+        command: ["/bin/sh", "-c"]
+        args: ["pip install boto3 redis && python -u /app/worker.py"]
+        livenessProbe:
+          exec:
+            command: ["python", "-c", "import os, sys; sys.exit(0 if os.path.exists('/tmp/worker_alive') else 1)"]
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: 50m
+            memory: 100Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        env:
+        - name: SQS_QUEUE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: aws-config
+              key: SQS_QUEUE_URL
+        - name: AWS_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: aws-config
+              key: AWS_REGION
+        - name: DDB_TABLE
+          valueFrom:
+            configMapKeyRef:
+              name: aws-config
+              key: DDB_TABLE
+        volumeMounts:
+        - name: code-volume
+          mountPath: /app
+      volumes:
+      - name: code-volume
+        configMap:
+          name: concert-app-code
