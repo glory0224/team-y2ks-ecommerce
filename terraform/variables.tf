@@ -19,7 +19,7 @@ variable "kubernetes_version" {
 variable "account_id" {
   description = "AWS 계정 ID"
   type        = string
-  default     = "314240764197"
+  default     = "497012402445"
 }
 
 variable "sender_email" {

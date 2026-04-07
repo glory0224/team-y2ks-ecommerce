@@ -21,7 +21,7 @@ data:
     AWS_REGION = os.environ.get('AWS_REGION', 'ap-northeast-2')
     QUEUE_URL = os.environ.get('SQS_QUEUE_URL', '')
     DDB_TABLE = os.environ.get('DDB_TABLE', 'y2ks-coupon-claims')
-    SENDER_EMAIL = 'pma5758@naver.com'
+    SENDER_EMAIL = 'tjzns20@gmail.com'
 
     r = redis.Redis(host=REDIS_HOST, port=6379, db=0, decode_responses=True)
     sqs_client = boto3.client('sqs', region_name=AWS_REGION)

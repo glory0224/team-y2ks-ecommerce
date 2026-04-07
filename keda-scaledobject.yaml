@@ -14,7 +14,7 @@ spec:
       identityOwner: operator
       # NOTE: KEDA SQS 스케일러는 queueURL을 ConfigMap에서 참조하는 기능을 지원하지 않습니다.
       # aws-config ConfigMap의 SQS_QUEUE_URL 값과 동일하게 유지해야 합니다.
-      queueURL: https://sqs.ap-northeast-2.amazonaws.com/314240764197/y2ks-queue
+      queueURL: https://sqs.ap-northeast-2.amazonaws.com/497012402445/y2ks-queue
       queueLength: "5"     # Scale up if there are more than 5 messages per replica
       awsRegion: "ap-northeast-2"
 ---

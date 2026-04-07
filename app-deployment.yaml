@@ -57,7 +57,7 @@ kind: ConfigMap
 metadata:
   name: aws-config
 data:
-  SQS_QUEUE_URL: "https://sqs.ap-northeast-2.amazonaws.com/314240764197/y2ks-queue"
+  SQS_QUEUE_URL: "https://sqs.ap-northeast-2.amazonaws.com/497012402445/y2ks-queue"
   AWS_REGION: "ap-northeast-2"
   DDB_TABLE: "y2ks-coupon-claims"
 ---
