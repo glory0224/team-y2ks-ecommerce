@@ -115,7 +115,7 @@ terraform apply --auto-approve
 | 노드그룹 | standard-nodes (t3.micro x2), app-nodes (t3.small x2) |
 | IAM Role | Y2ksWorkerRole, KedaOperatorRole, KarpenterControllerRole, KarpenterNodeRole |
 | DynamoDB | y2ks-coupon-claims (PAY_PER_REQUEST) |
-| SQS | KarpenterInterruption-{cluster_name} (Spot 인터럽트 알림용) |
+| SQS | KarpenterInterruption-{cluster_name} (Spot 인터럽트 알림용), y2ks-queue (부하테스트용)|
 | Access Entry | 현재 `aws configure` 사용자를 클러스터 admin으로 자동 등록 |
 
 > account ID는 `aws configure`에 설정된 값을 자동으로 읽습니다. 하드코딩 없음.
