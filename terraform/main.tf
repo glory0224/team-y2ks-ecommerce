@@ -34,7 +34,7 @@ resource "null_resource" "check_prerequisites" {
   }
 
   provisioner "local-exec" {
-    interpreter = ["PowerShell", "-Command"]
+    interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
     command     = <<-EOT
       Write-Host "=== 사전 요구사항 확인 ==="
 
@@ -73,7 +73,7 @@ resource "null_resource" "kubeconfig" {
   }
 
   provisioner "local-exec" {
-    interpreter = ["PowerShell", "-Command"]
+    interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
     command     = "aws eks update-kubeconfig --name ${aws_eks_cluster.main.name} --region ${var.aws_region}"
   }
 
@@ -97,7 +97,7 @@ resource "null_resource" "install_keda" {
   }
 
   provisioner "local-exec" {
-    interpreter = ["PowerShell", "-Command"]
+    interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
     command     = <<-EOT
       helm repo add kedacore https://kedacore.github.io/charts
       helm repo update
@@ -120,7 +120,7 @@ resource "null_resource" "install_karpenter" {
   }
 
   provisioner "local-exec" {
-    interpreter = ["PowerShell", "-Command"]
+    interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
     command     = <<-EOT
       helm upgrade --install karpenter oci://public.ecr.aws/karpenter/karpenter `
         --version 1.1.1 `
@@ -148,7 +148,7 @@ resource "null_resource" "service_accounts" {
   }
 
   provisioner "local-exec" {
-    interpreter = ["PowerShell", "-Command"]
+    interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
     command     = <<-EOT
       kubectl create serviceaccount worker-sa --dry-run=client -o yaml | kubectl apply -f -
       kubectl annotate serviceaccount worker-sa `
@@ -182,7 +182,7 @@ resource "null_resource" "install_y2ks" {
   }
 
   provisioner "local-exec" {
-    interpreter = ["PowerShell", "-Command"]
+    interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
     command     = <<-EOT
       kubectl wait --for=condition=established crd/scaledobjects.keda.sh --timeout=120s
       kubectl wait --for=condition=established crd/triggerauthentications.keda.sh --timeout=120s

@@ -86,7 +86,6 @@ KEDA + Karpenter로 트래픽 스파이크를 자동 대응합니다.
 | Terraform ≥ 1.5 | https://developer.hashicorp.com/terraform/install |
 | kubectl | https://kubernetes.io/docs/tasks/tools/ |
 | Helm | https://helm.sh/docs/intro/install/ |
-| Git Bash (Windows) | https://git-scm.com/downloads |
 
 ---
 
