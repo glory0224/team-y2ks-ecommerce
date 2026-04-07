@@ -3,7 +3,7 @@
 # 기존: worker-policy.json + worker-trust-policy.json + AWS CLI
 # ============================================================
 resource "aws_iam_policy" "worker" {
-  name        = "ModoWorkerPolicy"
+  name        = "Y2ksWorkerPolicy"
   description = "SQS 수신/삭제, SES 이메일 발송 권한"
 
   policy = jsonencode({
@@ -31,7 +31,7 @@ resource "aws_iam_policy" "worker" {
 }
 
 resource "aws_iam_policy" "worker_dynamodb" {
-  name        = "ModoWorkerDynamoDB"
+  name        = "Y2ksWorkerDynamoDB"
   description = "DynamoDB 쿠폰 발급 기록 읽기/쓰기 권한"
 
   policy = jsonencode({
@@ -52,7 +52,7 @@ resource "aws_iam_policy" "worker_dynamodb" {
 }
 
 resource "aws_iam_role" "worker" {
-  name        = "ModoWorkerRole"
+  name        = "Y2ksWorkerRole"
   description = "IRSA: worker-sa ServiceAccount가 사용하는 IAM 역할"
 
   # OIDC를 통해 Kubernetes ServiceAccount와 연동 (토큰/시크릿 불필요)

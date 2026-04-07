@@ -14,7 +14,7 @@ spec:
       labels:
         app: redis
     spec:
-      priorityClassName: modo-critical
+      priorityClassName: y2ks-critical
       containers:
       - name: redis
         image: redis:alpine

@@ -20,7 +20,7 @@ data:
     PROMETHEUS_URL = os.environ.get('PROMETHEUS_URL', 'http://prometheus-service:9090')
     AWS_REGION = os.environ.get('AWS_REGION', 'ap-northeast-2')
     QUEUE_URL = os.environ.get('SQS_QUEUE_URL', '')
-    DDB_TABLE = os.environ.get('DDB_TABLE', 'modo-coupon-claims')
+    DDB_TABLE = os.environ.get('DDB_TABLE', 'y2ks-coupon-claims')
     SENDER_EMAIL = 'pma5758@naver.com'
 
     r = redis.Redis(host=REDIS_HOST, port=6379, db=0, decode_responses=True)
@@ -31,7 +31,7 @@ data:
         chars = string.ascii_uppercase + string.digits
         p1 = ''.join(random.choices(chars, k=4))
         p2 = ''.join(random.choices(chars, k=4))
-        return f'MODO-{p1}-{p2}'
+        return f'Y2KS-{p1}-{p2}'
 
     MAIN_HTML = open('/app/main.html').read()
     EVENT_HTML = open('/app/event.html').read()
@@ -281,7 +281,7 @@ data:
     REDIS_HOST = os.environ.get('REDIS_HOST', 'redis-service')
     AWS_REGION = os.environ.get('AWS_REGION', 'ap-northeast-2')
     QUEUE_URL = os.environ.get('SQS_QUEUE_URL', '')
-    DDB_TABLE = os.environ.get('DDB_TABLE', 'modo-coupon-claims')
+    DDB_TABLE = os.environ.get('DDB_TABLE', 'y2ks-coupon-claims')
 
     r = redis.Redis(host=REDIS_HOST, port=6379, db=0, decode_responses=True)
     sqs = boto3.client('sqs', region_name=AWS_REGION)
@@ -292,7 +292,7 @@ data:
         chars = string.ascii_uppercase + string.digits
         p1 = ''.join(random.choices(chars, k=4))
         p2 = ''.join(random.choices(chars, k=4))
-        return f'MODO-{p1}-{p2}'
+        return f'Y2KS-{p1}-{p2}'
 
     def save_to_ddb(request_id, status, coupon_code=None):
         item = {
@@ -332,7 +332,7 @@ data:
             print(f'DynamoDB restore error: {e} — defaulting to 0 for safety', flush=True)
             return 0
 
-    print('MODO Worker started', flush=True)
+    print('Y2KS Worker started', flush=True)
 
     while True:
         try:
@@ -381,7 +381,7 @@ data:
     # SQS_QUEUE_URL에서 큐 이름 추출 (URL 마지막 경로 = 큐 이름)
     queue_url_env = os.environ.get('SQS_QUEUE_URL', '')
     queue_name = queue_url_env.split('/')[-1] if queue_url_env else 'y2ks-queue'
-    table_name = os.environ.get('DDB_TABLE', 'modo-coupon-claims')
+    table_name = os.environ.get('DDB_TABLE', 'y2ks-coupon-claims')
 
     print('=== AWS Infrastructure Setup ===', flush=True)
 

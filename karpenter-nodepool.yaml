@@ -12,18 +12,18 @@ spec:
     - alias: al2@latest
   # karpenter-cfn.yaml이 생성한 KarpenterNodeRole 사용
   # EC2 인스턴스가 EKS 워커 노드로 등록될 때 이 Role을 사용합니다.
-  role: "KarpenterNodeRole-my-eks-cluster"
+  role: "KarpenterNodeRole-y2ks-eks-cluster"
   # eksctl이 클러스터 VPC 서브넷에 자동으로 붙이는 태그로 서브넷 선택
   subnetSelectorTerms:
     - tags:
-        karpenter.sh/discovery: my-eks-cluster
+        karpenter.sh/discovery: y2ks-eks-cluster
   # 클러스터 노드 보안 그룹을 태그로 선택
   securityGroupSelectorTerms:
     - tags:
-        karpenter.sh/discovery: my-eks-cluster
+        karpenter.sh/discovery: y2ks-eks-cluster
   # Karpenter가 생성하는 노드에 붙일 태그 (서브넷/SG 셀렉터와 동일한 태그)
   tags:
-    karpenter.sh/discovery: my-eks-cluster
+    karpenter.sh/discovery: y2ks-eks-cluster
 ---
 # NodePool: Karpenter가 자동으로 추가/제거할 노드의 제약 조건
 apiVersion: karpenter.sh/v1

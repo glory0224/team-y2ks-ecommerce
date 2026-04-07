@@ -1,7 +1,7 @@
 variable "cluster_name" {
   description = "EKS 클러스터 이름"
   type        = string
-  default     = "my-eks-cluster"
+  default     = "y2ks-eks-cluster"
 }
 
 variable "aws_region" {
