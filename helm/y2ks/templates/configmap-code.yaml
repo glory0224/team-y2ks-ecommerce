@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: concert-app-code
+  name: y2ks-app-code
 data:
   app.py: |
     from flask import Flask, jsonify, request
@@ -13,7 +13,7 @@ data:
         app,
         excluded_paths=['/metrics'],
         group_by='url_rule',
-        default_labels={'app': 'concert-frontend'}
+        default_labels={'app': 'y2ks-frontend'}
     )
 
     REDIS_HOST = os.environ.get('REDIS_HOST', 'redis-service')
@@ -194,7 +194,7 @@ data:
                     ready_nodes += 1
                     if node.get('metadata', {}).get('labels', {}).get('karpenter.sh/capacity-type') == 'spot':
                         spot_nodes += 1
-            dr = http_requests.get(f'{base}/apis/apps/v1/namespaces/{ns}/deployments/concert-worker', headers=hdrs, verify=ca, timeout=5)
+            dr = http_requests.get(f'{base}/apis/apps/v1/namespaces/{ns}/deployments/y2ks-worker', headers=hdrs, verify=ca, timeout=5)
             desired = dr.json().get('spec', {}).get('replicas', 1)
             return jsonify({'worker_pods': worker_running, 'worker_desired': desired, 'nodes_ready': ready_nodes, 'nodes_spot': spot_nodes})
         except Exception as e:

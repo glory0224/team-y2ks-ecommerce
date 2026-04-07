@@ -149,6 +149,16 @@ resource "aws_eks_node_group" "app" {
 }
 
 # ============================================================
+# Karpenter가 보안그룹을 찾을 수 있도록 클러스터 SG에 discovery 태그 추가
+# EKS가 자동 생성하는 cluster security group에는 이 태그가 없음
+# ============================================================
+resource "aws_ec2_tag" "cluster_sg_karpenter" {
+  resource_id = aws_eks_cluster.main.vpc_config[0].cluster_security_group_id
+  key         = "karpenter.sh/discovery"
+  value       = var.cluster_name
+}
+
+# ============================================================
 # EKS 애드온 (시스템 컴포넌트)
 # ============================================================
 resource "aws_eks_addon" "vpc_cni" {
@@ -173,4 +183,53 @@ resource "aws_eks_addon" "metrics_server" {
   cluster_name = aws_eks_cluster.main.name
   addon_name   = "metrics-server"
   depends_on   = [aws_eks_node_group.standard]
+}
+
+# ============================================================
+# EKS 클러스터 접근 권한 (terraform 실행 유저 자동 등록)
+# terraform apply를 실행한 IAM 유저에게 자동으로 cluster-admin 부여
+# ============================================================
+resource "aws_eks_access_entry" "terraform_runner" {
+  cluster_name  = aws_eks_cluster.main.name
+  principal_arn = data.aws_caller_identity.current.arn
+  type          = "STANDARD"
+}
+
+resource "aws_eks_access_policy_association" "terraform_runner_admin" {
+  cluster_name  = aws_eks_cluster.main.name
+  principal_arn = data.aws_caller_identity.current.arn
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+
+  access_scope {
+    type = "cluster"
+  }
+
+  depends_on = [aws_eks_access_entry.terraform_runner]
+}
+
+# ============================================================
+# EKS 클러스터 접근 권한 (팀원 자동 등록)
+# variables.tf의 team_member_usernames에 추가하면
+# terraform apply만으로 kubectl 권한 자동 부여
+# ============================================================
+resource "aws_eks_access_entry" "team" {
+  for_each = toset(var.team_member_usernames)
+
+  cluster_name  = aws_eks_cluster.main.name
+  principal_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/${each.value}"
+  type          = "STANDARD"
+}
+
+resource "aws_eks_access_policy_association" "team_admin" {
+  for_each = toset(var.team_member_usernames)
+
+  cluster_name  = aws_eks_cluster.main.name
+  principal_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/${each.value}"
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+
+  access_scope {
+    type = "cluster"
+  }
+
+  depends_on = [aws_eks_access_entry.team]
 }
