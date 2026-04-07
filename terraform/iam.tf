@@ -15,7 +15,8 @@ resource "aws_iam_policy" "worker" {
           "sqs:ReceiveMessage",
           "sqs:DeleteMessage",
           "sqs:GetQueueAttributes",
-          "sqs:SendMessage"
+          "sqs:SendMessage",
+          "sqs:CreateQueue"
         ]
         Resource = "arn:aws:sqs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:y2ks-queue"
       },
