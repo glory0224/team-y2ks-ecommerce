@@ -1,0 +1,28 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: aws-sqs-queue-scaledobject
+  namespace: default
+spec:
+  scaleTargetRef:
+    name: concert-worker
+  minReplicaCount: 1       # Optional, default: 0. Set to 1 so there's always a worker. Or 0 to scale to zero.
+  maxReplicaCount: 50      # Optional, default: 100
+  triggers:
+  - type: aws-sqs-queue
+    metadata:
+      identityOwner: operator
+      # NOTE: KEDA SQS 스케일러는 queueURL을 ConfigMap에서 참조하는 기능을 지원하지 않습니다.
+      # aws-config ConfigMap의 SQS_QUEUE_URL 값과 동일하게 유지해야 합니다.
+      queueURL: https://sqs.ap-northeast-2.amazonaws.com/${AWS_ACCOUNT_ID}/y2ks-queue
+      queueLength: "5"     # Scale up if there are more than 5 messages per replica
+      awsRegion: "ap-northeast-2"
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: keda-aws-credentials
+  namespace: default
+spec:
+  podIdentity:
+    provider: aws-eks
