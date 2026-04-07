@@ -1,5 +1,5 @@
 # ============================================================
-# Worker IAM (concert-frontend + concert-worker 파드용)
+# Worker IAM (y2ks-frontend + y2ks-worker 파드용)
 # 기존: worker-policy.json + worker-trust-policy.json + AWS CLI
 # ============================================================
 resource "aws_iam_policy" "worker" {
@@ -18,7 +18,7 @@ resource "aws_iam_policy" "worker" {
           "sqs:GetQueueAttributes",
           "sqs:SendMessage"
         ]
-        Resource = "arn:aws:sqs:${var.aws_region}:${var.account_id}:y2ks-queue"
+        Resource = "arn:aws:sqs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:y2ks-queue"
       },
       {
         Sid      = "SESAccess"

@@ -1,0 +1,26 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: aws-sqs-queue-scaledobject
+  namespace: default
+spec:
+  scaleTargetRef:
+    name: y2ks-worker
+  minReplicaCount: {{ .Values.worker.minReplicas }}
+  maxReplicaCount: {{ .Values.worker.maxReplicas }}
+  triggers:
+  - type: aws-sqs-queue
+    metadata:
+      identityOwner: operator
+      queueURL: "https://sqs.{{ .Values.region }}.amazonaws.com/{{ .Values.accountId }}/{{ .Values.queueName }}"
+      queueLength: "{{ .Values.worker.queueLength }}"
+      awsRegion: "{{ .Values.region }}"
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: keda-aws-credentials
+  namespace: default
+spec:
+  podIdentity:
+    provider: aws-eks

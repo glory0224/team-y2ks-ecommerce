@@ -1,0 +1,21 @@
+# ============================================================
+# Terraform이 aws configure를 읽어서 자동으로 채워주는 값들
+# 직접 수정하지 말 것 — terraform apply 시 자동 주입됨
+# ============================================================
+accountId: ""
+region: "ap-northeast-2"
+clusterName: "y2ks-eks-cluster"
+workerRoleArn: ""
+karpenterNodeRoleName: ""
+
+# ============================================================
+# 앱 설정 — 필요 시 수정 가능
+# ============================================================
+queueName: "y2ks-queue"
+ddbTable: "y2ks-coupon-claims"
+senderEmail: "wooseoyun@naver.com"
+
+worker:
+  minReplicas: 1
+  maxReplicas: 50
+  queueLength: "5"
