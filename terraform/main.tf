@@ -28,23 +28,23 @@ resource "null_resource" "check_prerequisites" {
     interpreter = ["bash", "-c"]
     command     = <<-EOT
       echo "=== 사전 요구사항 확인 ==="
-      if ! command -v aws &> /dev/null; then
+      if ! aws --version > /dev/null 2>&1; then
         echo "[ERROR] aws cli가 설치되어 있지 않습니다. https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2.html"
         exit 1
       fi
-      echo "[OK] aws cli: $(aws --version)"
+      echo "[OK] aws cli: $(aws --version 2>&1)"
 
-      if ! command -v kubectl &> /dev/null; then
+      if ! kubectl version --client > /dev/null 2>&1; then
         echo "[ERROR] kubectl이 설치되어 있지 않습니다. https://kubernetes.io/docs/tasks/tools/"
         exit 1
       fi
-      echo "[OK] kubectl: $(kubectl version --client --short 2>/dev/null || kubectl version --client)"
+      echo "[OK] kubectl: $(kubectl version --client 2>&1 | head -1)"
 
-      if ! command -v helm &> /dev/null; then
+      if ! helm version > /dev/null 2>&1; then
         echo "[ERROR] helm이 설치되어 있지 않습니다. https://helm.sh/docs/intro/install/"
         exit 1
       fi
-      echo "[OK] helm: $(helm version --short)"
+      echo "[OK] helm: $(helm version --short 2>&1)"
 
       echo "=== 모든 사전 요구사항 충족 ==="
     EOT
