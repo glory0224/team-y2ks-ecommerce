@@ -1,0 +1,414 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: concert-app-code
+data:
+  app.py: |
+    from flask import Flask, jsonify, request
+    import boto3, redis, uuid, json, os, random, string, requests as http_requests
+    from prometheus_flask_exporter import PrometheusMetrics
+
+    app = Flask(__name__)
+    metrics = PrometheusMetrics(
+        app,
+        excluded_paths=['/metrics'],
+        group_by='url_rule',
+        default_labels={'app': 'concert-frontend'}
+    )
+
+    REDIS_HOST = os.environ.get('REDIS_HOST', 'redis-service')
+    PROMETHEUS_URL = os.environ.get('PROMETHEUS_URL', 'http://prometheus-service:9090')
+    AWS_REGION = os.environ.get('AWS_REGION', 'ap-northeast-2')
+    QUEUE_URL = os.environ.get('SQS_QUEUE_URL', '')
+    DDB_TABLE = os.environ.get('DDB_TABLE', 'modo-coupon-claims')
+    SENDER_EMAIL = 'pma5758@naver.com'
+
+    r = redis.Redis(host=REDIS_HOST, port=6379, db=0, decode_responses=True)
+    sqs_client = boto3.client('sqs', region_name=AWS_REGION)
+    ses_client = boto3.client('ses', region_name=AWS_REGION)
+
+    def gen_coupon():
+        chars = string.ascii_uppercase + string.digits
+        p1 = ''.join(random.choices(chars, k=4))
+        p2 = ''.join(random.choices(chars, k=4))
+        return f'MODO-{p1}-{p2}'
+
+    MAIN_HTML = open('/app/main.html').read()
+    EVENT_HTML = open('/app/event.html').read()
+
+    @app.route('/')
+    def index():
+        return MAIN_HTML
+
+    @app.route('/event')
+    def event():
+        return EVENT_HTML
+
+    @app.route('/api/tickets')
+    def get_tickets():
+        val = r.get('tickets')
+        if val is None:
+            r.set('tickets', 100)
+            val = '100'
+        return jsonify({'remaining': int(val)})
+
+    @app.route('/api/claim', methods=['POST'])
+    def claim():
+        request_id = str(uuid.uuid4())
+        r.setex(f'result:{request_id}', 600, 'pending')
+        try:
+            sqs_client.send_message(
+                QueueUrl=QUEUE_URL,
+                MessageBody=json.dumps({'request_id': request_id, 'type': 'claim'})
+            )
+        except Exception as e:
+            r.delete(f'result:{request_id}')
+            return jsonify({'error': 'queue_unavailable', 'message': str(e)}), 503
+        return jsonify({'request_id': request_id, 'status': 'queued'})
+
+    @app.route('/api/check/<request_id>')
+    def check_result(request_id):
+        result = r.get(f'result:{request_id}')
+        return jsonify({'status': result if result else 'pending'})
+
+    @app.route('/admin')
+    def admin():
+        return open('/app/admin.html').read()
+
+    @app.route('/api/admin/stats')
+    def admin_stats():
+        tickets_left = r.get('tickets')
+        if tickets_left is None:
+            tickets_left = 100
+        tickets_left = int(tickets_left)
+        claimed = 100 - max(tickets_left, 0)
+        try:
+            ddb = boto3.resource('dynamodb', region_name=AWS_REGION)
+            table = ddb.Table(DDB_TABLE)
+            # scan 1번으로 모두 집계
+            winner_count = loser_count = email_sent_count = 0
+            scan_kw = {'ProjectionExpression': '#s, email_sent', 'ExpressionAttributeNames': {'#s': 'status'}}
+            while True:
+                resp = table.scan(**scan_kw)
+                for item in resp.get('Items', []):
+                    if item.get('status') == 'winner':
+                        winner_count += 1
+                    elif item.get('status') == 'loser':
+                        loser_count += 1
+                    if item.get('email_sent') == True:
+                        email_sent_count += 1
+                if 'LastEvaluatedKey' not in resp:
+                    break
+                scan_kw['ExclusiveStartKey'] = resp['LastEvaluatedKey']
+        except Exception as e:
+            winner_count = loser_count = email_sent_count = 0
+        try:
+            sqs_resp = sqs_client.get_queue_attributes(
+                QueueUrl=QUEUE_URL,
+                AttributeNames=['ApproximateNumberOfMessages', 'ApproximateNumberOfMessagesNotVisible']
+            )
+            queue_depth = int(sqs_resp['Attributes'].get('ApproximateNumberOfMessages', 0))
+            in_flight = int(sqs_resp['Attributes'].get('ApproximateNumberOfMessagesNotVisible', 0))
+        except Exception:
+            queue_depth = in_flight = 0
+        return jsonify({
+            'tickets_left': max(tickets_left, 0),
+            'tickets_claimed': claimed,
+            'winner_count': winner_count,
+            'loser_count': loser_count,
+            'email_sent_count': email_sent_count,
+            'queue_depth': queue_depth,
+            'in_flight': in_flight
+        })
+
+    @app.route('/api/admin/claims')
+    def admin_claims():
+        try:
+            page = max(1, int(request.args.get('page', 1)))
+            limit = max(1, min(100, int(request.args.get('limit', 20))))
+            ddb = boto3.resource('dynamodb', region_name=AWS_REGION)
+            table = ddb.Table(DDB_TABLE)
+            items = []
+            scan_kw = {}
+            while True:
+                result = table.scan(**scan_kw)
+                items.extend(result.get('Items', []))
+                if 'LastEvaluatedKey' not in result:
+                    break
+                scan_kw['ExclusiveStartKey'] = result['LastEvaluatedKey']
+            items = sorted(items, key=lambda x: x.get('claimed_at', ''), reverse=True)
+            total = len(items)
+            start = (page - 1) * limit
+            pages = max(1, (total + limit - 1) // limit)
+            return jsonify({'items': items[start:start+limit], 'total': total, 'page': page, 'limit': limit, 'pages': pages})
+        except Exception as e:
+            return jsonify({'items': [], 'total': 0, 'page': 1, 'limit': 20, 'pages': 1, 'error': str(e)})
+
+    @app.route('/api/admin/metrics')
+    def admin_metrics():
+        query = request.args.get('query', '')
+        start = request.args.get('start', '')
+        end = request.args.get('end', '')
+        step = request.args.get('step', '15s')
+        try:
+            resp = http_requests.get(
+                f'{PROMETHEUS_URL}/api/v1/query_range',
+                params={'query': query, 'start': start, 'end': end, 'step': step},
+                timeout=10
+            )
+            return jsonify(resp.json()), resp.status_code
+        except Exception:
+            return jsonify({'error': 'prometheus unavailable'}), 503
+
+    @app.route('/api/admin/metrics/instant')
+    def admin_metrics_instant():
+        query = request.args.get('query', '')
+        try:
+            resp = http_requests.get(
+                f'{PROMETHEUS_URL}/api/v1/query',
+                params={'query': query},
+                timeout=10
+            )
+            return jsonify(resp.json()), resp.status_code
+        except Exception:
+            return jsonify({'error': 'prometheus unavailable'}), 503
+
+    @app.route('/api/admin/k8s')
+    def admin_k8s():
+        try:
+            token = open('/var/run/secrets/kubernetes.io/serviceaccount/token').read().strip()
+            ns = open('/var/run/secrets/kubernetes.io/serviceaccount/namespace').read().strip()
+            ca = '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
+            host = os.environ.get('KUBERNETES_SERVICE_HOST', 'kubernetes.default.svc')
+            port = os.environ.get('KUBERNETES_SERVICE_PORT', '443')
+            base = f'https://{host}:{port}'
+            hdrs = {'Authorization': f'Bearer {token}', 'Accept': 'application/json'}
+            pr = http_requests.get(f'{base}/api/v1/namespaces/{ns}/pods?labelSelector=app%3Dworker', headers=hdrs, verify=ca, timeout=5)
+            pods_list = pr.json().get('items', [])
+            worker_running = sum(1 for p in pods_list if p.get('status', {}).get('phase') == 'Running')
+            nr = http_requests.get(f'{base}/api/v1/nodes', headers=hdrs, verify=ca, timeout=5)
+            ready_nodes = spot_nodes = 0
+            for node in nr.json().get('items', []):
+                conds = node.get('status', {}).get('conditions', [])
+                if any(c.get('type') == 'Ready' and c.get('status') == 'True' for c in conds):
+                    ready_nodes += 1
+                    if node.get('metadata', {}).get('labels', {}).get('karpenter.sh/capacity-type') == 'spot':
+                        spot_nodes += 1
+            dr = http_requests.get(f'{base}/apis/apps/v1/namespaces/{ns}/deployments/concert-worker', headers=hdrs, verify=ca, timeout=5)
+            desired = dr.json().get('spec', {}).get('replicas', 1)
+            return jsonify({'worker_pods': worker_running, 'worker_desired': desired, 'nodes_ready': ready_nodes, 'nodes_spot': spot_nodes})
+        except Exception as e:
+            return jsonify({'error': str(e), 'worker_pods': 0, 'worker_desired': 0, 'nodes_ready': 0, 'nodes_spot': 0})
+
+    @app.route('/api/admin/reset', methods=['POST'])
+    def admin_reset():
+        # Redis 초기화
+        r.set('tickets', 100)
+        # SQS 큐 비우기 (대기 중인 메시지 모두 삭제)
+        try:
+            while True:
+                resp = sqs_client.receive_message(QueueUrl=QUEUE_URL, MaxNumberOfMessages=10, WaitTimeSeconds=0)
+                msgs = resp.get('Messages', [])
+                if not msgs:
+                    break
+                for msg in msgs:
+                    sqs_client.delete_message(QueueUrl=QUEUE_URL, ReceiptHandle=msg['ReceiptHandle'])
+        except Exception as e:
+            print(f'SQS flush warning: {e}', flush=True)
+        # DynamoDB 전체 삭제
+        try:
+            ddb_r = boto3.resource('dynamodb', region_name=AWS_REGION)
+            table = ddb_r.Table(DDB_TABLE)
+            scan = table.scan(ProjectionExpression='request_id')
+            with table.batch_writer() as batch:
+                for item in scan.get('Items', []):
+                    batch.delete_item(Key={'request_id': item['request_id']})
+            while 'LastEvaluatedKey' in scan:
+                scan = table.scan(ProjectionExpression='request_id', ExclusiveStartKey=scan['LastEvaluatedKey'])
+                with table.batch_writer() as batch:
+                    for item in scan.get('Items', []):
+                        batch.delete_item(Key={'request_id': item['request_id']})
+        except Exception as e:
+            print(f'DynamoDB reset warning: {e}', flush=True)
+        return jsonify({'success': True, 'message': '티켓 100장, SQS 큐, DynamoDB 기록이 초기화되었습니다.'})
+
+    @app.route('/api/submit-email', methods=['POST'])
+    def submit_email():
+        data = request.get_json()
+        request_id = data.get('request_id', '')
+        email = data.get('email', '')
+        if not email or '@' not in email:
+            return jsonify({'success': False, 'message': '올바른 이메일을 입력해주세요.'})
+        result = r.get(f'result:{request_id}')
+        if result != 'winner':
+            return jsonify({'success': False, 'message': '당첨자가 아닙니다.'})
+        if r.get(f'email_sent:{request_id}'):
+            return jsonify({'success': False, 'message': '이미 발송되었습니다.'})
+        coupon = r.get(f'coupon:{request_id}')
+        if not coupon:
+            return jsonify({'success': False, 'message': '쿠폰 정보를 찾을 수 없습니다.'})
+        try:
+            ses_client.send_email(
+                Source=SENDER_EMAIL,
+                Destination={'ToAddresses': [email]},
+                Message={
+                    'Subject': {'Data': '🎉 80% 할인 쿠폰 당첨을 축하드립니다!'},
+                    'Body': {'Html': {'Data': f'<div style="font-family:sans-serif;max-width:500px;margin:0 auto;padding:40px;"><h2 style="color:#0a0a0a;margin-bottom:16px;">🎉 당첨을 축하합니다!</h2><p style="color:#555;margin-bottom:24px;">Y2KS 봄 시즌 80% 할인 쿠폰이 발급되었습니다.</p><div style="background:#f5f5f5;padding:24px;border-radius:8px;text-align:center;margin-bottom:24px;"><p style="font-size:11px;color:#999;margin-bottom:8px;letter-spacing:2px;">쿠폰 코드</p><strong style="font-size:26px;letter-spacing:6px;color:#0a0a0a;">{coupon}</strong></div><p style="color:#999;font-size:12px;">유효기간: 2026년 6월 30일까지<br>Y2KS 온라인 스토어에서 사용 가능합니다.</p></div>'}}
+                }
+            )
+            r.setex(f'email_sent:{request_id}', 600, '1')
+            try:
+                ddb = boto3.resource('dynamodb', region_name=AWS_REGION)
+                table = ddb.Table(DDB_TABLE)
+                table.update_item(
+                    Key={'request_id': request_id},
+                    UpdateExpression='SET email = :e, email_sent = :s',
+                    ExpressionAttributeValues={':e': email, ':s': True}
+                )
+            except Exception as ddb_e:
+                print(f'DynamoDB update warning: {ddb_e}', flush=True)
+            return jsonify({'success': True, 'coupon': coupon})
+        except Exception as e:
+            return jsonify({'success': False, 'message': f'이메일 발송 실패: {str(e)}'})
+
+    if __name__ == '__main__':
+        app.run(host='0.0.0.0', port=5000, debug=False)
+
+  worker.py: |
+    import boto3, redis, json, time, os, random, string
+    from datetime import datetime, timezone
+
+    REDIS_HOST = os.environ.get('REDIS_HOST', 'redis-service')
+    AWS_REGION = os.environ.get('AWS_REGION', 'ap-northeast-2')
+    QUEUE_URL = os.environ.get('SQS_QUEUE_URL', '')
+    DDB_TABLE = os.environ.get('DDB_TABLE', 'modo-coupon-claims')
+
+    r = redis.Redis(host=REDIS_HOST, port=6379, db=0, decode_responses=True)
+    sqs = boto3.client('sqs', region_name=AWS_REGION)
+    ddb = boto3.resource('dynamodb', region_name=AWS_REGION)
+    table = ddb.Table(DDB_TABLE)
+
+    def gen_coupon():
+        chars = string.ascii_uppercase + string.digits
+        p1 = ''.join(random.choices(chars, k=4))
+        p2 = ''.join(random.choices(chars, k=4))
+        return f'MODO-{p1}-{p2}'
+
+    def save_to_ddb(request_id, status, coupon_code=None):
+        item = {
+            'request_id': request_id,
+            'status': status,
+            'claimed_at': datetime.now(timezone.utc).isoformat(),
+            'email_sent': False
+        }
+        if coupon_code:
+            item['coupon_code'] = coupon_code
+        try:
+            table.put_item(Item=item)
+            print(f'DynamoDB saved: {request_id} -> {status}', flush=True)
+        except Exception as e:
+            print(f'DynamoDB error: {e}', flush=True)
+
+    def restore_tickets_from_ddb():
+        """Redis 재시작 시 DynamoDB 당첨 수를 기반으로 남은 티켓 수량 복구"""
+        try:
+            winners = 0
+            scan_kwargs = {
+                'FilterExpression': '#s = :winner',
+                'ExpressionAttributeNames': {'#s': 'status'},
+                'ExpressionAttributeValues': {':winner': 'winner'},
+                'Select': 'COUNT'
+            }
+            response = table.scan(**scan_kwargs)
+            winners += response['Count']
+            while 'LastEvaluatedKey' in response:
+                scan_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
+                response = table.scan(**scan_kwargs)
+                winners += response['Count']
+            remaining = max(100 - winners, 0)
+            print(f'Redis restored from DynamoDB: {winners} winners, tickets={remaining}', flush=True)
+            return remaining
+        except Exception as e:
+            print(f'DynamoDB restore error: {e} — defaulting to 0 for safety', flush=True)
+            return 0
+
+    print('MODO Worker started', flush=True)
+
+    while True:
+        try:
+            open('/tmp/worker_alive', 'w').close()
+            response = sqs.receive_message(
+                QueueUrl=QUEUE_URL,
+                MaxNumberOfMessages=1,
+                WaitTimeSeconds=5
+            )
+            if 'Messages' in response:
+                for msg in response['Messages']:
+                    receipt = msg['ReceiptHandle']
+                    try:
+                        body = json.loads(msg['Body'])
+                        request_id = body.get('request_id')
+                        print(f'Processing claim: {request_id}', flush=True)
+                        if r.get('tickets') is None:
+                            remaining = restore_tickets_from_ddb()
+                            r.set('tickets', remaining, nx=True)  # 여러 Worker 동시 실행 시 한 번만 설정
+                        tickets = r.decr('tickets')
+                        if tickets >= 0:
+                            coupon = gen_coupon()
+                            r.setex(f'result:{request_id}', 600, 'winner')
+                            r.setex(f'coupon:{request_id}', 600, coupon)
+                            save_to_ddb(request_id, 'winner', coupon)
+                            print(f'Winner! coupon={coupon}, left={tickets}', flush=True)
+                        else:
+                            r.set('tickets', 0)
+                            r.setex(f'result:{request_id}', 600, 'loser')
+                            save_to_ddb(request_id, 'loser')
+                            print(f'Sold out. {request_id} missed.', flush=True)
+                        sqs.delete_message(QueueUrl=QUEUE_URL, ReceiptHandle=receipt)
+                    except Exception as e:
+                        print(f'Error processing {request_id}: {e} — message will be retried', flush=True)
+        except Exception as e:
+            print(f'Queue error: {e}', flush=True)
+            time.sleep(2)
+
+  setup.py: |
+    # AWS 인프라 초기화 스크립트
+    # Job(aws-infra-setup)에 의해 배포 시 한 번 실행됩니다.
+    # SQS 큐와 DynamoDB 테이블이 없으면 생성합니다.
+    import boto3, os, sys
+
+    region = os.environ.get('AWS_REGION', 'ap-northeast-2')
+    # SQS_QUEUE_URL에서 큐 이름 추출 (URL 마지막 경로 = 큐 이름)
+    queue_url_env = os.environ.get('SQS_QUEUE_URL', '')
+    queue_name = queue_url_env.split('/')[-1] if queue_url_env else 'y2ks-queue'
+    table_name = os.environ.get('DDB_TABLE', 'modo-coupon-claims')
+
+    print('=== AWS Infrastructure Setup ===', flush=True)
+
+    # SQS 큐 생성
+    sqs = boto3.client('sqs', region_name=region)
+    try:
+        r = sqs.create_queue(QueueName=queue_name)
+        print(f'[OK] SQS queue created: {r["QueueUrl"]}', flush=True)
+    except sqs.exceptions.QueueNameExists:
+        print(f'[OK] SQS queue already exists: {queue_name}', flush=True)
+    except Exception as e:
+        print(f'[FAIL] SQS error: {e}', file=sys.stderr, flush=True)
+
+    # DynamoDB 테이블 생성
+    ddb = boto3.client('dynamodb', region_name=region)
+    try:
+        ddb.create_table(
+            TableName=table_name,
+            AttributeDefinitions=[{'AttributeName': 'request_id', 'AttributeType': 'S'}],
+            KeySchema=[{'AttributeName': 'request_id', 'KeyType': 'HASH'}],
+            BillingMode='PAY_PER_REQUEST'
+        )
+        print(f'[OK] DynamoDB table created: {table_name}', flush=True)
+    except ddb.exceptions.ResourceInUseException:
+        print(f'[OK] DynamoDB table already exists: {table_name}', flush=True)
+    except Exception as e:
+        print(f'[FAIL] DynamoDB error: {e}', file=sys.stderr, flush=True)
+
+    print('=== Setup complete ===', flush=True)
+

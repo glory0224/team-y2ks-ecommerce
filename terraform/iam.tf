@@ -18,7 +18,7 @@ resource "aws_iam_policy" "worker" {
           "sqs:GetQueueAttributes",
           "sqs:SendMessage"
         ]
-        Resource = "arn:aws:sqs:${var.aws_region}:${var.account_id}:ticket-queue"
+        Resource = "arn:aws:sqs:${var.aws_region}:${var.account_id}:y2ks-queue"
       },
       {
         Sid      = "SESAccess"
