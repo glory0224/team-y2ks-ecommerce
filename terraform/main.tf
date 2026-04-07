@@ -24,6 +24,15 @@ data "aws_caller_identity" "current" {}
 # 하나라도 없으면 이후 모든 단계가 실패하므로 가장 먼저 실행
 # ============================================================
 resource "null_resource" "check_prerequisites" {
+  triggers = {
+    script_hash = sha256(<<-EOT
+      aws --version
+      kubectl version --client
+      helm version
+    EOT
+    )
+  }
+
   provisioner "local-exec" {
     interpreter = ["bash", "-c"]
     command     = <<-EOT
