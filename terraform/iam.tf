@@ -4,7 +4,7 @@
 # ============================================================
 resource "aws_iam_policy" "worker" {
   name        = "Y2ksWorkerPolicy"
-  description = "SQS 수신/삭제, SES 이메일 발송 권한"
+  description = "SQS receive/delete and SES send permissions"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -32,7 +32,7 @@ resource "aws_iam_policy" "worker" {
 
 resource "aws_iam_policy" "worker_dynamodb" {
   name        = "Y2ksWorkerDynamoDB"
-  description = "DynamoDB 쿠폰 발급 기록 읽기/쓰기 권한"
+  description = "DynamoDB coupon claims read/write permissions"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -53,7 +53,7 @@ resource "aws_iam_policy" "worker_dynamodb" {
 
 resource "aws_iam_role" "worker" {
   name        = "Y2ksWorkerRole"
-  description = "IRSA: worker-sa ServiceAccount가 사용하는 IAM 역할"
+  description = "IRSA role for worker-sa ServiceAccount"
 
   # OIDC를 통해 Kubernetes ServiceAccount와 연동 (토큰/시크릿 불필요)
   assume_role_policy = jsonencode({
@@ -91,7 +91,7 @@ resource "aws_iam_role_policy_attachment" "worker_dynamodb" {
 # ============================================================
 resource "aws_iam_role" "keda_operator" {
   name        = "KedaOperatorRole"
-  description = "IRSA: keda-operator가 SQS 메시지 수를 읽기 위한 IAM 역할"
+  description = "IRSA role for keda-operator to read SQS queue depth"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -194,11 +194,13 @@ resource "aws_iam_policy" "karpenter_controller" {
         Action = [
           "ec2:RunInstances", "ec2:TerminateInstances",
           "ec2:DescribeInstances", "ec2:DescribeInstanceTypes",
+          "ec2:DescribeInstanceTypeOfferings", "ec2:DescribeAvailabilityZones",
           "ec2:DescribeSubnets", "ec2:DescribeSecurityGroups",
           "ec2:DescribeLaunchTemplates", "ec2:DescribeSpotPriceHistory",
           "ec2:CreateFleet", "ec2:CreateLaunchTemplate",
           "ec2:DeleteLaunchTemplate", "ec2:CreateTags",
-          "pricing:GetProducts", "ssm:GetParameter"
+          "pricing:GetProducts", "ssm:GetParameter",
+          "eks:DescribeCluster"
         ]
         Resource = "*"
       },
