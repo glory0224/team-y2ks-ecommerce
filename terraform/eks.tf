@@ -36,6 +36,10 @@ resource "aws_eks_cluster" "main" {
     authentication_mode = "API_AND_CONFIG_MAP"
   }
 
+  tags = {
+    "karpenter.sh/discovery" = var.cluster_name
+  }
+
   depends_on = [aws_iam_role_policy_attachment.eks_cluster_policy]
 }
 
