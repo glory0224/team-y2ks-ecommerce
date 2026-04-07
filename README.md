@@ -1,138 +1,141 @@
-# Y2KS Fashion - EKS 쿠폰 이벤트 시스템
+# Y2KS Fashion - EKS Coupon Event System
 
-고트래픽 선착순 쿠폰 이벤트를 AWS EKS 위에서 운영하는 패션 쇼핑몰 시스템입니다.
-KEDA + Karpenter로 정각 트래픽 스파이크를 자동 대응합니다.
+High-traffic first-come-first-served coupon even system running on AWS EKS.
+KEDA + Karpenter handle automatic scaling for traffic spikes.
 
 ---
 
-## 아키텍처
+## Architecture
 
 ```
-[사용자]
+[User]
    │
    ▼
-[쇼핑몰 메인 /]  →  [이벤트 페이지 /event]
+[Shop Main /]  →  [Event Page /event]
                               │
-                     버튼 클릭 (정각)
+                        Button click
                               │
                     [Flask API /api/claim]
                               │
-                         [SQS Queue]  ←── KEDA가 메시지 수 감지
+                         [SQS Queue]  ←── KEDA monitors message count
                               │                    │
                         [Worker Pod]  ──────── Scale Out
-                              │            (Karpenter → EC2 Spot 노드 추가)
+                              │            (Karpenter → add EC2 Spot nodes)
                    ┌──────────┴──────────┐
                    │                     │
-                당첨 (Redis)          낙첨 (Redis)
+               Winner (Redis)        Loser (Redis)
                    │                     │
-             [DynamoDB 기록]       [DynamoDB 기록]
+             [DynamoDB record]     [DynamoDB record]
                    │
-         이메일 입력 → SES 발송
+         Email input → SES send
 ```
 
 ---
 
-## 구성 요소
+## Components
 
-| 서비스 | 역할 | 기술 |
-|--------|------|------|
-| concert-frontend | 쇼핑몰 UI + Flask API | Python 3.9 + gunicorn |
-| concert-worker | SQS 메시지 소비, 당첨/낙첨 처리 | Python 3.9 + boto3 |
-| Redis | 실시간 티켓 수량 및 결과 임시 저장 | Redis Alpine |
-| DynamoDB | 쿠폰 발급 이력 영구 저장 | AWS DynamoDB (PAY_PER_REQUEST) |
-| SES | 당첨자 쿠폰 이메일 발송 | AWS SES |
-| KEDA | SQS 메시지 수 기반 Worker 자동 스케일링 | KEDA v2 |
-| Karpenter | 부하 시 EC2 Spot 노드 자동 추가/제거 | Karpenter v1 |
+| Service | Role | Stack |
+|---------|------|-------|
+| y2ks-frontend | Shop UI + Flask API | Python 3.9 + gunicorn |
+| y2ks-worker | SQS consumer, winner/loser processing | Python 3.9 + boto3 |
+| Redis | Real-time ticket count and result cache | Redis Alpine |
+| DynamoDB | Permanent coupon issuance records | AWS DynamoDB (PAY_PER_REQUEST) |
+| SES | Winner coupon email delivery | AWS SES |
+| KEDA | Auto-scale worker based on SQS message count | KEDA v2 |
+| Karpenter | Add/remove EC2 Spot nodes under load | Karpenter v1 |
 
 ---
 
-## 파일 구조
+## File Structure
 
 ```
 .
 ├── terraform/
-│   ├── main.tf             # Provider 설정, aws_caller_identity (계정 ID 자동 감지)
-│   ├── variables.tf        # 클러스터명, 리전, k8s 버전, 발신 이메일
-│   ├── vpc.tf              # VPC, 퍼블릭 서브넷 3개, IGW
-│   ├── eks.tf              # EKS 클러스터, 노드그룹 2개, OIDC, Access Entry
+│   ├── main.tf             # Provider, aws_caller_identity (auto-detects account ID)
+│   ├── variables.tf        # Cluster name, region, k8s version, sender email
+│   ├── vpc.tf              # VPC, 3 public subnets, IGW
+│   ├── eks.tf              # EKS cluster, 2 node groups, OIDC, Access Entry
 │   ├── iam.tf              # Worker / KEDA / Karpenter IAM Role + Policy
-│   ├── dynamodb.tf         # DynamoDB 테이블 (modo-coupon-claims)
-│   └── outputs.tf          # 배포에 필요한 ARN, URL, 클러스터 정보 출력
+│   ├── dynamodb.tf         # DynamoDB table (y2ks-coupon-claims)
+│   └── outputs.tf          # ARN, URL, cluster info outputs
 ├── app-deployment.yaml     # PriorityClass, RBAC, ConfigMap, Deployment, Service
 ├── redis.yaml              # Redis Deployment + ClusterIP Service
 ├── keda-scaledobject.yaml  # KEDA ScaledObject + TriggerAuthentication
 ├── karpenter-nodepool.yaml # EC2NodeClass + NodePool
-└── deploy.sh               # KEDA/Karpenter Helm 설치 + yaml 적용 자동화
+└── deploy.sh               # KEDA/Karpenter Helm install + yaml apply automation
 ```
 
 ---
 
-## 사전 요구사항
+## Prerequisites
 
-- AWS CLI — `aws configure` 완료
+- AWS CLI — `aws configure` completed
 - Terraform >= 1.5
 - kubectl
 - helm
-- envsubst (`gettext` 패키지)
+- envsubst (`gettext` package)
 
 ---
 
-## 배포 순서
+## Deployment Order
 
 ```
-[1] terraform apply          AWS 인프라 전체 생성
+[1] terraform apply             Create all AWS infrastructure
       │
-[2] aws eks update-kubeconfig   클러스터 접근 설정
+[2] aws eks update-kubeconfig   Configure cluster access
       │
-[3] kubectl create serviceaccount worker-sa   IRSA 연결
+[3] kubectl create serviceaccount worker-sa + IRSA annotation
       │
 [4] kubectl apply -f redis.yaml
       │
-[5] envsubst | kubectl apply -f app-deployment.yaml   앱 배포
+[5] envsubst | kubectl apply -f app-deployment.yaml
       │
-[6] bash deploy.sh           KEDA + Karpenter 설치 및 yaml 적용
+[6] bash deploy.sh              Install KEDA + Karpenter and apply yamls
 ```
 
 ---
 
-### 1. Terraform — AWS 인프라 생성
+### 1. Terraform — Create AWS Infrastructure
 
 ```bash
 cd terraform
 terraform init
-terraform apply
+terraform fmt
+terraform validate
+terraform plan
+terraform apply --auto-approve
 ```
 
-생성 리소스:
+Resources created:
 
-| 리소스 | 내용 |
-|--------|------|
-| VPC | 192.168.0.0/16, 퍼블릭 서브넷 3개 (AZ별) |
+| Resource | Details |
+|----------|---------|
+| VPC | 192.168.0.0/16, 3 public subnets (per AZ) |
 | EKS | v1.31, authentication_mode: API_AND_CONFIG_MAP |
-| 노드그룹 | standard-nodes (t3.micro x2), app-nodes (t3.small x2) |
-| IAM Role | ModoWorkerRole, KedaOperatorRole, KarpenterControllerRole, KarpenterNodeRole |
-| DynamoDB | modo-coupon-claims (PAY_PER_REQUEST) |
-| SQS | KarpenterInterruption-{cluster_name} (Spot 인터럽트 알림용) |
-| Access Entry | 현재 `aws configure` 사용자를 클러스터 admin으로 자동 등록 |
+| Node Groups | standard-nodes (t3.micro x2), app-nodes (t3.small x2) |
+| IAM Roles | Y2ksWorkerRole, KedaOperatorRole, KarpenterControllerRole, KarpenterNodeRole |
+| DynamoDB | y2ks-coupon-claims (PAY_PER_REQUEST) |
+| SQS | KarpenterInterruption-{cluster_name} (Spot interruption notifications) |
+| Access Entry | Current `aws configure` user auto-registered as cluster admin |
 
-> account ID는 `aws configure`에 설정된 값을 자동으로 읽습니다. 하드코딩 없음.
+> Account ID is read automatically from `aws configure`. No hardcoding.
 
 ---
 
-### 2. EKS — kubeconfig 업데이트
+### 2. EKS — Update kubeconfig
 
 ```bash
-cd .. # terraform 폴더에서 상위 폴더로 이동
+cd ..  # back to project root from terraform/
 aws eks update-kubeconfig \
   --region ap-northeast-2 \
   --name $(terraform -chdir=terraform output -raw cluster_name)
 
-kubectl get nodes   # 노드 4개 확인
+kubectl get nodes   # expect 4 nodes
 ```
 
 ---
 
-### 3. Kubernetes — worker-sa ServiceAccount 생성 및 IRSA 연결
+### 3. Kubernetes — Create worker-sa ServiceAccount and attach IRSA
 
 ```bash
 kubectl create serviceaccount worker-sa
@@ -143,7 +146,7 @@ kubectl annotate serviceaccount worker-sa \
 
 ---
 
-### 4. Kubernetes — Redis 배포
+### 4. Kubernetes — Deploy Redis
 
 ```bash
 kubectl apply -f redis.yaml
@@ -151,10 +154,10 @@ kubectl apply -f redis.yaml
 
 ---
 
-### 5. Kubernetes — 앱 배포
+### 5. Kubernetes — Deploy App
 
-`app-deployment.yaml`과 `keda-scaledobject.yaml`에는 `${AWS_ACCOUNT_ID}`, `karpenter-nodepool.yaml`에는 `${CLUSTER_NAME}` 플레이스홀더가 있습니다.
-`envsubst`로 치환 후 적용합니다.
+`app-deployment.yaml` contains `${AWS_ACCOUNT_ID}` placeholder.
+Use `envsubst` to substefore applying.
 
 ```bash
 export AWS_ACCOUNT_ID=$(terraform -chdir=terraform output -raw account_id)
@@ -162,42 +165,42 @@ export AWS_ACCOUNT_ID=$(terraform -chdir=terraform output -raw account_id)
 envsubst < app-deployment.yaml | kubectl apply -f -
 ```
 
-배포 확인:
+Verify:
 
 ```bash
 kubectl get pods
-# concert-frontend-xxx   1/1   Running
-# concert-worker-xxx     1/1   Running
-# aws-infra-setup-xxx    0/1   Completed   ← SQS 큐/DynamoDB 자동 생성 Job
+# y2ks-frontend-xxx   1/1   Running
+# y2ks-worker-xxx     1/1   Running
+# aws-infra-setup-xxx 0/1   Completed   ← auto-creates SQS queue and DynamoDB table
 
-kubectl get svc concert-frontend-svc
-# EXTERNAL-IP 에 LoadBalancer URL이 나타날 때까지 1~2분 대기
+kubectl get svc y2ks-frontend-svc
+# Wait 1-2 min for EXTERNAL-IP to appear (LoadBalancer URL)
 ```
 
 ---
 
-### 6. Helm + Kubernetes — KEDA / Karpenter 설치
+### 6. Helm + Kubernetes — Install KEDA / Karpenter
 
 ```bash
 bash deploy.sh
 ```
-`deploy.sh` 내부 흐름:
+
+`deploy.sh` flow:
 
 ```
-helm install keda                          KEDA 컨트롤러 설치
-  └─ kubectl annotate keda-operator        IRSA 연결
-  └─ envsubst | kubectl apply              keda-scaledobject.yaml 적용
+helm install keda                          Install KEDA controller
+  └─ kubectl annotate keda-operator        Attach IRSA
+  └─ envsubst | kubectl apply              Apply keda-scaledobject.yaml
 
-aws ecr-public get-login-password          ECR Public 인증 (us-east-1 필수)
+aws ecr-public get-login-password          Authenticate ECR Public (us-east-1 required)
   └─ helm registry login public.ecr.aws
-helm install karpenter                     Karpenter 컨트롤러 설치
-  └─ envsubst | kubectl apply              karpenter-nodepool.yaml 적용
-```─ envsubst | kubectl apply              karpenter-nodepool.yaml 적용
+helm install karpenter                     Install Karpenter controller
+  └─ envsubst | kubectl apply              Apply karpenter-nodepool.yaml
 ```
 
 ---
 
-## 최종 상태 확인
+## Final State Check
 
 ```bash
 kubectl get pods -A
@@ -206,8 +209,8 @@ kubectl get pods -A
 ```
 NAMESPACE     NAME                                    READY   STATUS
 default       redis-xxx                               1/1     Running
-default       concert-frontend-xxx                    1/1     Running
-default       concert-worker-xxx                      1/1     Running
+default       y2ks-frontend-xxx                       1/1     Running
+default       y2ks-worker-xxx                         1/1     Running
 default       aws-infra-setup-xxx                     0/1     Completed
 keda          keda-operator-xxx                       1/1     Running
 keda          keda-admission-webhooks-xxx             1/1     Running
@@ -216,44 +219,46 @@ karpenter     karpenter-xxx                           1/1     Running
 ```
 
 ```bash
-kubectl get svc concert-frontend-svc
-# EXTERNAL-IP 값이 접속 URL
+kubectl get svc y2ks-frontend-svc
+# EXTERNAL-IP is the access URL
 ```
 
 ---
 
-## 리소스 삭제
+## Teardown
 
-Helm과 kubectl로 생성한 리소스를 먼저 제거한 뒤 Terraform으로 AWS 인프라를 삭제합니다.
-순서를 지키지 않으면 LoadBalancer, 노드 등이 VPC에 남아 `terraform destroy`가 실패합니다.
+Remove Helm and kubectl resources first, then destroy Terraform infrastructure.
+Skipping this order will leave LoadBalancers and nodes in the VPC, causing `terraform destroy` to fail.
 
 ```
-[1] kubectl delete          앱 / Redis / KEDA CRD 제거
+[1] kubectl delete          Remove app / Redis / KEDA CRDs
       │
-[2] helm uninstall keda     KEDA 컨트롤러 제거
+[2] helm uninstall keda     Remove KEDA controller
       │
-[3] helm uninstall karpenter   Karpenter 컨트롤러 제거
+[3] helm uninstall karpenter   Remove Karpenter controller
       │
-[4] terraform destroy       AWS 인프라 전체 삭제
+[4] terraform destroy       Destroy all AWS infrastructure
 ```
 
-### 1. Kubernetes 리소스 제거
+### 1. Remove Kubernetes Resources
 
 ```bash
-# KEDA ScaledObject, Karpenter NodePool 제거
-kubectl delete -f keda-scaledobject.yaml
-kubectl delete -f karpenter-nodepool.yaml
+# Remove KEDA ScaledObject and Karpenter NodePool
+export AWS_ACCOUNT_ID=$(terraform -chdir=terraform output -raw account_id)
+export CLUSTER_NAME=$(terraform -chdir=terraform output -raw cluster_name)
 
-# 앱 및 Redis 제거 (LoadBalancer Service 포함)
-AWS_ACCOUNT_ID=$(terraform -chdir=terraform output -raw account_id) \
-  envsubst < app-deployment.yaml | kubectl delete -f -
+envsubst < keda-scaledobject.yaml | kubectl delete -f -
+envsubst < karpenter-nodepool.yaml | kubectl delete -f -
+
+# Remove app and Redis (includes LoadBalancer Service)
+l delete -f -
 kubectl delete -f redis.yaml
 
-# worker-sa ServiceAccount 제거
+# Remove worker-sa ServiceAccount
 kubectl delete serviceaccount worker-sa
 ```
 
-### 2. Helm — KEDA / Karpenter 제거
+### 2. Helm — Uninstall KEDA / Karpenter
 
 ```bash
 helm uninstall keda -n keda
@@ -263,35 +268,35 @@ kubectl delete namespace keda
 kubectl delete namespace karpenter
 ```
 
-### 3. Terraform — AWS 인프라 삭제
+### 3. Terraform — Destroy AWS Infrastructure
 
 ```bash
 cd terraform
 terraform destroy
 ```
 
-> LoadBalancer가 완전히 삭제되기까지 수 분이 걸릴 수 있습니다.
-> `terraform destroy` 중 VPC 삭제 실패 시 AWS 콘솔에서 ENI(탄력적 네트워크 인터페이스)가 남아있는지 확인하세요.
+> LoadBalancer deletion may take a few minutes.
+> IENIs (Elastic Network Interfaces) in the AWS console.
 
 ---
 
-## 부록
+## Appendix
 
-### DynamoDB 스키마 — modo-coupon-claims
+### DynamoDB Schema — y2ks-coupon-claims
 
-| 필드 | 타입 | 설명 |
-|------|------|------|
-| `request_id` | String (PK) | 클릭 시 생성되는 UUID |
+| Field | Type | Description |
+|-------|------|-------------|
+| `request_id` | String (PK) | UUID generated on button click |
 | `status` | String | `winner` / `loser` |
-| `coupon_code` | String | 발급된 쿠폰 코드 (당첨자만) |
-| `claimed_at` | String | 처리 ISO 타임스탬프 |
-| `email` | String | 당첨자 이메일 |
-| `email_sent` | Boolean | SES 발송 완료 여부 |
+| `coupon_code` | String | Issued coupon code (winners only) |
+| `claimed_at` | String | ISO timestamp of processing |
+| `email` | String | Winner email address |
+| `email_sent` | Boolean | Whether SES email was sent |
 
 ### PriorityClass
 
-| 클래스 | 값 | 대상 | 설명 |
-|--------|---|------|------|
-| `modo-critical` | 100,000 | Redis | 절대 선점 불가 |
-| `modo-high` | 10,000 | Frontend | 트래픽 스파이크 시에도 항상 보장 |
-| `modo-normal` | 1,000 | Worker | 리소스 부족 시 선점 허용 |
+| Class | Value | Target | Description |
+|-------|-------|--------|-------------|
+| `y2ks-critical` | 100,000 | Redis | Never preempted |
+| `y2ks-high` | 10,000 | Frontend | Guaranteed even during traffic spikes |
+| `y2ks-normal` | 1,000 | Worker | Preemptible when resources are scarce |

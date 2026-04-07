@@ -1,10 +1,10 @@
 #!/bin/bash
-# Helm 설치 + yaml 적용을 한 번에 처리하는 배포 스크립트
-# 사용법: bash deploy.sh
+# Deployment script: installs Helm charts and applies yaml manifests
+# Usage: bash deploy.sh
 
 set -e
 
-# terraform output에서 값 자동 읽기
+# Read values from terraform output
 export AWS_ACCOUNT_ID=$(terraform -chdir=terraform output -raw account_id)
 export CLUSTER_NAME=$(terraform -chdir=terraform output -raw cluster_name)
 export KARPENTER_ROLE_ARN=$(terraform -chdir=terraform output -raw karpenter_controller_role_arn)
@@ -27,7 +27,7 @@ envsubst < keda-scaledobject.yaml | kubectl apply -f -
 
 # ── Karpenter ─────────────────────────────────────────
 echo "[3/4] Installing Karpenter..."
-# ECR Public은 us-east-1로 인증해야 합니다
+# ECR Public registry requires authentication against us-east-1
 aws ecr-public get-login-password --region us-east-1 \
   | helm registry login --username AWS --password-stdin public.ecr.aws
 

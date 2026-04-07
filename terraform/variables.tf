@@ -1,25 +1,25 @@
 variable "cluster_name" {
-  description = "EKS 클러스터 이름"
+  description = "EKS cluster name"
   type        = string
-  default     = "my-eks-cluster"
+  default     = "y2ks-cluster"
 }
 
 variable "aws_region" {
-  description = "AWS 리전"
+  description = "AWS region"
   type        = string
   default     = "ap-northeast-2"
 }
 
 variable "kubernetes_version" {
-  description = "Kubernetes 버전"
+  description = "Kubernetes version"
   type        = string
   default     = "1.31"
 }
 
-# account_id는 variables.tf에서 제거 - main.tf의 data.aws_caller_identity.current.account_id 사용
+# account_id is removed - use data.aws_caller_identity.current.account_id in main.tf
 
 variable "sender_email" {
-  description = "SES 발신 이메일 (SES에서 인증된 이메일)"
+  description = "SES sender email (must be verified in SES)"
   type        = string
   default     = "wooseoyun@naver.com"
 }

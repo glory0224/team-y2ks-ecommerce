@@ -1,10 +1,9 @@
 # ============================================================
-# DynamoDB 쿠폰 발급 기록 테이블
-# 기존: aws dynamodb create-table --table-name modo-coupon-claims ...
+# DynamoDB table for coupon claim records (y2ks-coupon-claims)
 # ============================================================
 resource "aws_dynamodb_table" "claims" {
-  name         = "modo-coupon-claims"
-  billing_mode = "PAY_PER_REQUEST" # 요청 수만큼 과금 (서버리스)
+  name         = "y2ks-coupon-claims"
+  billing_mode = "PAY_PER_REQUEST" # Serverless - pay per request
   hash_key     = "request_id"      # PK: UUID
 
   attribute {
@@ -12,15 +11,15 @@ resource "aws_dynamodb_table" "claims" {
     type = "S" # String
   }
 
-  # 저장되는 필드 (attribute 선언 불필요 - DynamoDB는 스키마리스)
+  # Schema-less fields stored per item (no attribute declaration needed):
   # - status      : "winner" / "loser"
-  # - coupon_code : "MODO-XXXX-XXXX" (당첨자만)
-  # - claimed_at  : ISO 타임스탬프
-  # - email       : 당첨자 이메일 (나중에 추가)
+  # - coupon_code : "Y2KS-XXXX-XXXX" (winners only)
+  # - claimed_at  : ISO timestamp
+  # - email       : winner email (updated after submission)
   # - email_sent  : true / false
 
   tags = {
-    Project = "modo-ecommerce"
+    Project = "y2ks-ecommerce"
     Purpose = "coupon-claims"
   }
 }

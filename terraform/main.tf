@@ -16,5 +16,5 @@ provider "aws" {
   region = var.aws_region
 }
 
-# aws configure에 설정된 계정 ID를 자동으로 읽어옴
+# Automatically reads account ID from aws configure
 data "aws_caller_identity" "current" {}

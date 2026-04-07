@@ -1,5 +1,5 @@
 # ============================================================
-# EKS 클러스터 IAM Role
+# EKS Cluster IAM Role
 # ============================================================
 resource "aws_iam_role" "eks_cluster" {
   name = "${var.cluster_name}-cluster-role"
@@ -20,7 +20,7 @@ resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
 }
 
 # ============================================================
-# EKS 클러스터
+# EKS Cluster
 # ============================================================
 resource "aws_eks_cluster" "main" {
   name     = var.cluster_name
@@ -40,7 +40,7 @@ resource "aws_eks_cluster" "main" {
 }
 
 # ============================================================
-# OIDC Provider (IRSA용 - IAM과 Kubernetes 연동)
+# OIDC Provider (for IRSA - links IAM with Kubernetes)
 # ============================================================
 data "tls_certificate" "eks" {
   url = aws_eks_cluster.main.identity[0].oidc[0].issuer
@@ -52,13 +52,13 @@ resource "aws_iam_openid_connect_provider" "eks" {
   url             = aws_eks_cluster.main.identity[0].oidc[0].issuer
 }
 
-# OIDC URL (https:// 제거한 버전 - IAM 조건문에 사용)
+# OIDC URL without https:// prefix - used in IAM condition keys
 locals {
   oidc_issuer = replace(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://", "")
 }
 
 # ============================================================
-# 노드그룹 공통 IAM Role
+# Shared Node Group IAM Role
 # ============================================================
 resource "aws_iam_role" "node_group" {
   name = "${var.cluster_name}-node-role"
@@ -89,7 +89,7 @@ resource "aws_iam_role_policy_attachment" "node_ecr" {
 }
 
 # ============================================================
-# 노드그룹 1: standard-nodes (t3.micro - 시스템 파드 전용)
+# Node Group 1: standard-nodes (t3.micro - system pods only)
 # ============================================================
 resource "aws_eks_node_group" "standard" {
   cluster_name    = aws_eks_cluster.main.name
@@ -116,8 +116,8 @@ resource "aws_eks_node_group" "standard" {
 }
 
 # ============================================================
-# 노드그룹 2: app-nodes (t3.small - 앱 파드 전용)
-# t3.micro는 MaxPods=4로 부족 → t3.small = MaxPods=11
+# Node Group 2: app-nodes (t3.small - app pods)
+# t3.micro MaxPods=4 is insufficient; t3.small supports MaxPods=11
 # ============================================================
 resource "aws_eks_node_group" "app" {
   cluster_name    = aws_eks_cluster.main.name
@@ -145,7 +145,7 @@ resource "aws_eks_node_group" "app" {
 }
 
 # ============================================================
-# EKS 애드온 (시스템 컴포넌트)
+# EKS Add-ons (system components)
 # ============================================================
 resource "aws_eks_addon" "vpc_cni" {
   cluster_name = aws_eks_cluster.main.name
@@ -172,8 +172,8 @@ resource "aws_eks_addon" "metrics_server" {
 }
 
 # ============================================================
-# EKS Access Entry - 현재 aws configure 사용자에게 클러스터 admin 권한 부여
-# authentication_mode = "API_AND_CONFIG_MAP" 환경에서 필수
+# EKS Access Entry - grants cluster admin to the current aws configure user
+# Required when authentication_mode = "API_AND_CONFIG_MAP"
 # ============================================================
 resource "aws_eks_access_entry" "admin" {
   cluster_name  = aws_eks_cluster.main.name

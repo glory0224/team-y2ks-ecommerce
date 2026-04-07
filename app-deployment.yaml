@@ -1,33 +1,33 @@
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
-  name: modo-critical
+  name: y2ks-critical
 value: 100000
 globalDefault: false
-description: "Redis 등 전체 시스템의 기반이 되는 핵심 서비스 - 절대 선점 불가"
+description: "Redis and core services - never preempted"
 ---
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
-  name: modo-high
+  name: y2ks-high
 value: 10000
 globalDefault: false
-description: "사용자 접속 프론트엔드 - 트래픽 스파이크 시에도 항상 보장"
+description: "Frontend - guaranteed even during traffic spikes"
 ---
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
-  name: modo-normal
+  name: y2ks-normal
 value: 1000
 globalDefault: true
-description: "KEDA Worker - 이벤트 처리용, 리소스 부족 시 선점 허용"
+description: "KEDA Worker - preemptible when resources are scarce"
 ---
-# Kubernetes RBAC: worker-sa가 K8s API로 파드/노드/디플로이먼트를 읽을 수 있게 허용
-# /api/admin/k8s 엔드포인트가 서비스 어카운트 토큰으로 K8s API를 직접 호출합니다.
+# Kubernetes RBAC: allows worker-sa to read pods/nodes/deployments via K8s API
+# Used by /api/admin/k8s endpoint which calls the K8s API with a service account token
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: modo-k8s-reader
+  name: y2ks-k8s-reader
 rules:
 - apiGroups: [""]
   resources: ["pods", "nodes"]
@@ -39,19 +39,19 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: modo-k8s-reader
+  name: y2ks-k8s-reader
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: modo-k8s-reader
+  name: y2ks-k8s-reader
 subjects:
 - kind: ServiceAccount
   name: worker-sa
   namespace: default
 ---
-# AWS 인프라 설정 ConfigMap
-# SQS URL, Region 등 AWS 관련 설정을 한 곳에서 관리합니다.
-# 계정 ID가 코드에 하드코딩되지 않도록 여기서 중앙 관리합니다.
+# AWS infrastructure ConfigMap
+# Centralizes SQS URL, Region, and DynamoDB table name
+# Account ID is injected via envsubst - no hardcoding
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -59,11 +59,11 @@ metadata:
 data:
   SQS_QUEUE_URL: "https://sqs.ap-northeast-2.amazonaws.com/${AWS_ACCOUNT_ID}/y2ks-queue"
   AWS_REGION: "ap-northeast-2"
-  DDB_TABLE: "modo-coupon-claims"
+  DDB_TABLE: "y2ks-coupon-claims"
 ---
-# AWS 인프라 초기화 Job
-# 앱 배포 전 SQS 큐와 DynamoDB 테이블이 없으면 자동으로 생성합니다.
-# kubectl apply 시 한 번 실행되며 5분 후 자동 삭제됩니다.
+# AWS infrastructure init Job
+# Creates SQS queue and DynamoDB table if they don't exist before app starts
+# Runs once on kubectl apply and auto-deletes after 5 minutes
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -101,12 +101,12 @@ spec:
       volumes:
       - name: code-volume
         configMap:
-          name: concert-app-code
+          name: y2ks-app-code
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: concert-app-code
+  name: y2ks-app-code
 data:
   app.py: |
     from flask import Flask, jsonify, request
@@ -118,14 +118,14 @@ data:
         app,
         excluded_paths=['/metrics'],
         group_by='url_rule',
-        default_labels={'app': 'concert-frontend'}
+        default_labels={'app': 'y2ks-frontend'}
     )
 
     REDIS_HOST = os.environ.get('REDIS_HOST', 'redis-service')
     PROMETHEUS_URL = os.environ.get('PROMETHEUS_URL', 'http://prometheus-service:9090')
     AWS_REGION = os.environ.get('AWS_REGION', 'ap-northeast-2')
     QUEUE_URL = os.environ.get('SQS_QUEUE_URL', '')
-    DDB_TABLE = os.environ.get('DDB_TABLE', 'modo-coupon-claims')
+    DDB_TABLE = os.environ.get('DDB_TABLE', 'y2ks-coupon-claims')
     SENDER_EMAIL = 'pma5758@naver.com'
 
     r = redis.Redis(host=REDIS_HOST, port=6379, db=0, decode_responses=True)
@@ -136,7 +136,7 @@ data:
         chars = string.ascii_uppercase + string.digits
         p1 = ''.join(random.choices(chars, k=4))
         p2 = ''.join(random.choices(chars, k=4))
-        return f'MODO-{p1}-{p2}'
+        return f'Y2KS-{p1}-{p2}'
 
     MAIN_HTML = open('/app/main.html').read()
     EVENT_HTML = open('/app/event.html').read()
@@ -190,7 +190,7 @@ data:
         try:
             ddb = boto3.resource('dynamodb', region_name=AWS_REGION)
             table = ddb.Table(DDB_TABLE)
-            # scan 1번으로 모두 집계
+            # aggregate all records in a single scan
             winner_count = loser_count = email_sent_count = 0
             scan_kw = {'ProjectionExpression': '#s, email_sent', 'ExpressionAttributeNames': {'#s': 'status'}}
             while True:
@@ -299,7 +299,7 @@ data:
                     ready_nodes += 1
                     if node.get('metadata', {}).get('labels', {}).get('karpenter.sh/capacity-type') == 'spot':
                         spot_nodes += 1
-            dr = http_requests.get(f'{base}/apis/apps/v1/namespaces/{ns}/deployments/concert-worker', headers=hdrs, verify=ca, timeout=5)
+            dr = http_requests.get(f'{base}/apis/apps/v1/namespaces/{ns}/deployments/y2ks-worker', headers=hdrs, verify=ca, timeout=5)
             desired = dr.json().get('spec', {}).get('replicas', 1)
             return jsonify({'worker_pods': worker_running, 'worker_desired': desired, 'nodes_ready': ready_nodes, 'nodes_spot': spot_nodes})
         except Exception as e:
@@ -307,9 +307,9 @@ data:
 
     @app.route('/api/admin/reset', methods=['POST'])
     def admin_reset():
-        # Redis 초기화
+        # Reset Redis
         r.set('tickets', 100)
-        # SQS 큐 비우기 (대기 중인 메시지 모두 삭제)
+        # Flush SQS queue (delete all pending messages)
         try:
             while True:
                 resp = sqs_client.receive_message(QueueUrl=QUEUE_URL, MaxNumberOfMessages=10, WaitTimeSeconds=0)
@@ -320,7 +320,7 @@ data:
                     sqs_client.delete_message(QueueUrl=QUEUE_URL, ReceiptHandle=msg['ReceiptHandle'])
         except Exception as e:
             print(f'SQS flush warning: {e}', flush=True)
-        # DynamoDB 전체 삭제
+        # Delete all DynamoDB records
         try:
             ddb_r = boto3.resource('dynamodb', region_name=AWS_REGION)
             table = ddb_r.Table(DDB_TABLE)
@@ -386,7 +386,7 @@ data:
     REDIS_HOST = os.environ.get('REDIS_HOST', 'redis-service')
     AWS_REGION = os.environ.get('AWS_REGION', 'ap-northeast-2')
     QUEUE_URL = os.environ.get('SQS_QUEUE_URL', '')
-    DDB_TABLE = os.environ.get('DDB_TABLE', 'modo-coupon-claims')
+    DDB_TABLE = os.environ.get('DDB_TABLE', 'y2ks-coupon-claims')
 
     r = redis.Redis(host=REDIS_HOST, port=6379, db=0, decode_responses=True)
     sqs = boto3.client('sqs', region_name=AWS_REGION)
@@ -397,7 +397,7 @@ data:
         chars = string.ascii_uppercase + string.digits
         p1 = ''.join(random.choices(chars, k=4))
         p2 = ''.join(random.choices(chars, k=4))
-        return f'MODO-{p1}-{p2}'
+        return f'Y2KS-{p1}-{p2}'
 
     def save_to_ddb(request_id, status, coupon_code=None):
         item = {
@@ -415,7 +415,7 @@ data:
             print(f'DynamoDB error: {e}', flush=True)
 
     def restore_tickets_from_ddb():
-        """Redis 재시작 시 DynamoDB 당첨 수를 기반으로 남은 티켓 수량 복구"""
+        """Restores remaining ticket count from DynamoDB winner records on Redis restart"""
         try:
             winners = 0
             scan_kwargs = {
@@ -437,7 +437,7 @@ data:
             print(f'DynamoDB restore error: {e} — defaulting to 0 for safety', flush=True)
             return 0
 
-    print('MODO Worker started', flush=True)
+    print('Y2KS Worker started', flush=True)
 
     while True:
         try:
@@ -456,7 +456,7 @@ data:
                         print(f'Processing claim: {request_id}', flush=True)
                         if r.get('tickets') is None:
                             remaining = restore_tickets_from_ddb()
-                            r.set('tickets', remaining, nx=True)  # 여러 Worker 동시 실행 시 한 번만 설정
+                            r.set('tickets', remaining, nx=True)  # nx=True ensures only one worker sets the value when multiple workers start simultaneously
                         tickets = r.decr('tickets')
                         if tickets >= 0:
                             coupon = gen_coupon()
@@ -477,20 +477,20 @@ data:
             time.sleep(2)
 
   setup.py: |
-    # AWS 인프라 초기화 스크립트
-    # Job(aws-infra-setup)에 의해 배포 시 한 번 실행됩니다.
-    # SQS 큐와 DynamoDB 테이블이 없으면 생성합니다.
+    # AWS infrastructure init script
+    # Runs once via the aws-infra-setup Job on deployment
+    # Creates SQS queue and DynamoDB table if they do not exist
     import boto3, os, sys
 
     region = os.environ.get('AWS_REGION', 'ap-northeast-2')
-    # SQS_QUEUE_URL에서 큐 이름 추출 (URL 마지막 경로 = 큐 이름)
+    # Extract queue name from SQS_QUEUE_URL (last path segment = queue name)
     queue_url_env = os.environ.get('SQS_QUEUE_URL', '')
     queue_name = queue_url_env.split('/')[-1] if queue_url_env else 'y2ks-queue'
-    table_name = os.environ.get('DDB_TABLE', 'modo-coupon-claims')
+    table_name = os.environ.get('DDB_TABLE', 'y2ks-coupon-claims')
 
     print('=== AWS Infrastructure Setup ===', flush=True)
 
-    # SQS 큐 생성
+    # Create SQS queue
     sqs = boto3.client('sqs', region_name=region)
     try:
         r = sqs.create_queue(QueueName=queue_name)
@@ -500,7 +500,7 @@ data:
     except Exception as e:
         print(f'[FAIL] SQS error: {e}', file=sys.stderr, flush=True)
 
-    # DynamoDB 테이블 생성
+    # Create DynamoDB table
     ddb = boto3.client('dynamodb', region_name=region)
     try:
         ddb.create_table(
@@ -1192,7 +1192,7 @@ data:
         podsHistory.push({ ts: now, label: label, val: k8sData.worker_pods || 0 });
         if (podsHistory.length > HISTORY_MAX) podsHistory.shift();
       } catch(e) {
-        var pods = await fetchInstant('kube_deployment_status_replicas{deployment="concert-worker"}');
+        var pods = await fetchInstant('kube_deployment_status_replicas{deployment="y2ks-worker"}');
         if (pods !== null) document.getElementById('s-worker-pods').textContent = Math.round(pods);
       }
 
@@ -1200,7 +1200,7 @@ data:
       if (statsData) document.getElementById('s-queue-pods').textContent = statsData.queue_depth;
 
       // Prometheus 먼저 시도, 실패 시 podsHistory로 차트 구성
-      var workerData = await fetchRange('kube_deployment_status_replicas{deployment="concert-worker"}', start, now, '30s');
+      var workerData = await fetchRange('kube_deployment_status_replicas{deployment="y2ks-worker"}', start, now, '30s');
       if (!workerData && podsHistory.length > 1) {
         // K8s API 폴링 데이터로 가짜 workerData 구성
         workerData = [{ values: podsHistory.map(function(h){ return [h.ts, String(h.val)]; }) }];
@@ -1777,7 +1777,7 @@ data:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: concert-frontend
+  name: y2ks-frontend
   labels:
     app: frontend
 spec:
@@ -1795,7 +1795,7 @@ spec:
         prometheus.io/path: "/metrics"
     spec:
       serviceAccountName: worker-sa
-      priorityClassName: modo-high
+      priorityClassName: y2ks-high
       containers:
       - name: web
         image: python:3.9-slim
@@ -1848,12 +1848,12 @@ spec:
       volumes:
       - name: code-volume
         configMap:
-          name: concert-app-code
+          name: y2ks-app-code
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: concert-frontend-svc
+  name: y2ks-frontend-svc
 spec:
   type: LoadBalancer
   selector:
@@ -1866,7 +1866,7 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: concert-worker
+  name: y2ks-worker
   labels:
     app: worker
 spec:
@@ -1880,7 +1880,7 @@ spec:
         app: worker
     spec:
       serviceAccountName: worker-sa
-      priorityClassName: modo-normal
+      priorityClassName: y2ks-normal
       containers:
       - name: worker
         image: python:3.9-slim
@@ -1921,4 +1921,4 @@ spec:
       volumes:
       - name: code-volume
         configMap:
-          name: concert-app-code
+          name: y2ks-app-code

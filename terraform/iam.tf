@@ -1,10 +1,9 @@
 # ============================================================
-# Worker IAM (concert-frontend + concert-worker 파드용)
-# 기존: worker-policy.json + worker-trust-policy.json + AWS CLI
+# Worker IAM (for y2ks-frontend + y2ks-worker pods)
 # ============================================================
 resource "aws_iam_policy" "worker" {
-  name        = "ModoWorkerPolicy"
-  description = "IAM role for worker-sa to process SQS messages and send emails via SES"
+  name        = "Y2ksWorkerPolicy"
+  description = "IAM policy for worker-sa to process SQS messages and send emails via SES"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -18,7 +17,7 @@ resource "aws_iam_policy" "worker" {
           "sqs:GetQueueAttributes",
           "sqs:SendMessage"
         ]
-        Resource = "arn:aws:sqs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:ticket-queue"
+        Resource = "arn:aws:sqs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:y2ks-queue"
       },
       {
         Sid      = "SESAccess"
@@ -31,8 +30,8 @@ resource "aws_iam_policy" "worker" {
 }
 
 resource "aws_iam_policy" "worker_dynamodb" {
-  name        = "ModoWorkerDynamoDB"
-  description = "IAM role for worker-sa to read and write coupon issuance records in DynamoDB"
+  name        = "Y2ksWorkerDynamoDB"
+  description = "IAM policy for worker-sa to read and write coupon records in DynamoDB"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -45,17 +44,17 @@ resource "aws_iam_policy" "worker_dynamodb" {
         "dynamodb:Query",
         "dynamodb:Scan"
       ]
-      # eks.tf의 DynamoDB 테이블 ARN을 직접 참조 (하드코딩 없음)
+      # References DynamoDB table ARN from dynamodb.tf (no hardcoding)
       Resource = aws_dynamodb_table.claims.arn
     }]
   })
 }
 
 resource "aws_iam_role" "worker" {
-  name        = "ModoWorkerRole"
-  description = "IAM Role used by worker-sa ServiceAccount for IRSA"
+  name        = "Y2ksWorkerRole"
+  description = "IAM Role used by worker-sa ServiceAccount via IRSA"
 
-  # OIDC를 통해 Kubernetes ServiceAccount와 연동 (토큰/시크릿 불필요)
+  # Linked to Kubernetes ServiceAccount via OIDC (no token/secret needed)
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -66,7 +65,7 @@ resource "aws_iam_role" "worker" {
       Action = "sts:AssumeRoleWithWebIdentity"
       Condition = {
         StringEquals = {
-          # eks.tf의 local.oidc_issuer를 자동 참조 (하드코딩 없음)
+          # References local.oidc_issuer from eks.tf (no hardcoding)
           "${local.oidc_issuer}:sub" = "system:serviceaccount:default:worker-sa"
           "${local.oidc_issuer}:aud" = "sts.amazonaws.com"
         }
@@ -87,7 +86,6 @@ resource "aws_iam_role_policy_attachment" "worker_dynamodb" {
 
 # ============================================================
 # KEDA Operator IAM
-# 기존: keda-operator-trust-policy.json + AWS CLI
 # ============================================================
 resource "aws_iam_role" "keda_operator" {
   name        = "KedaOperatorRole"
@@ -118,7 +116,6 @@ resource "aws_iam_role_policy_attachment" "keda_sqs" {
 
 # ============================================================
 # Karpenter Node IAM
-# 기존: karpenter-cfn.yaml (CloudFormation)의 KarpenterNodeRole
 # ============================================================
 resource "aws_iam_role" "karpenter_node" {
   name = "KarpenterNodeRole-${var.cluster_name}"
@@ -160,7 +157,6 @@ resource "aws_iam_instance_profile" "karpenter_node" {
 
 # ============================================================
 # Karpenter Controller IAM
-# 기존: karpenter-cfn.yaml의 KarpenterControllerPolicy
 # ============================================================
 resource "aws_iam_role" "karpenter_controller" {
   name = "KarpenterControllerRole-${var.cluster_name}"
@@ -222,8 +218,7 @@ resource "aws_iam_role_policy_attachment" "karpenter_controller" {
 }
 
 # ============================================================
-# Karpenter Spot 인터럽트 알림용 SQS
-# 기존: karpenter-cfn.yaml의 SQS 리소스
+# SQS queue for Karpenter Spot interruption notifications
 # ============================================================
 resource "aws_sqs_queue" "karpenter_interruption" {
   name                      = "KarpenterInterruption-${var.cluster_name}"

@@ -15,7 +15,7 @@ resource "aws_vpc" "main" {
 }
 
 # ============================================================
-# 퍼블릭 서브넷 (3개 AZ) - LoadBalancer, 노드 배치용
+# Public subnets (3 AZs) - for LoadBalancer and node placement
 # ============================================================
 resource "aws_subnet" "public" {
   count                   = 3
@@ -45,7 +45,7 @@ resource "aws_internet_gateway" "main" {
 }
 
 # ============================================================
-# 퍼블릭 라우트 테이블
+# Public route table
 # ============================================================
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
