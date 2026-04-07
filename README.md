@@ -248,11 +248,14 @@ EC2NodeClass는 Karpenter가 finalizer를 붙여놓기 때문에 단순 `kubectl
 Karpenter 컨트롤러가 정상 동작하지 않는 상태라면 finalizer를 강제로 제거해야 합니다.
 
 ```bash
+ 
+kubectl delete ec2nodeclass default --ignore-not-found
+# 만약 위 명령어가 오래 걸리는 경우 ctrl + c 로 취소 한 뒤에 아래 finalizer 제거 후 다시 시도
+
 # finalizer 강제 제거 후 삭제
 kubectl patch ec2nodeclass default --type=json \
   -p='[{"op":"remove","path":"/metadata/finalizers"}]'
 
-kubectl delete ec2nodeclass default --ignore-not-found
 kubectl delete nodepool default --ignore-not-found
 ```
 
