@@ -97,11 +97,52 @@ resource "null_resource" "kubeconfig" {
 }
 
 # ============================================================
+# Prometheus 설치 (helm CLI 직접 실행)
+# frontend의 admin 메트릭 엔드포인트가 prometheus-server.monitoring:80 참조
+# ============================================================
+resource "null_resource" "install_prometheus" {
+  triggers = {
+    cluster_name = aws_eks_cluster.main.name
+  }
+
+  provisioner "local-exec" {
+    when        = destroy
+    interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
+    command     = "helm uninstall prometheus --namespace monitoring 2>$null; exit 0"
+  }
+
+  provisioner "local-exec" {
+    interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
+    command     = <<-EOT
+      helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+      helm repo update
+      helm uninstall prometheus --namespace monitoring 2>$null
+      kubectl delete pvc --all -n monitoring 2>$null
+      Start-Sleep -Seconds 5
+      helm upgrade --install prometheus prometheus-community/prometheus `
+        --namespace monitoring --create-namespace `
+        --set server.persistentVolume.enabled=false `
+        --set alertmanager.enabled=false `
+        --set prometheus-node-exporter.enabled=false `
+        --wait --timeout 5m
+    EOT
+  }
+
+  depends_on = [null_resource.kubeconfig]
+}
+
+# ============================================================
 # KEDA 설치 (helm CLI 직접 실행)
 # ============================================================
 resource "null_resource" "install_keda" {
   triggers = {
     cluster_name = aws_eks_cluster.main.name
+  }
+
+  provisioner "local-exec" {
+    when        = destroy
+    interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
+    command     = "helm uninstall keda --namespace keda 2>$null; exit 0"
   }
 
   provisioner "local-exec" {
@@ -125,6 +166,12 @@ resource "null_resource" "install_keda" {
 resource "null_resource" "install_karpenter" {
   triggers = {
     cluster_name = aws_eks_cluster.main.name
+  }
+
+  provisioner "local-exec" {
+    when        = destroy
+    interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
+    command     = "helm uninstall karpenter --namespace karpenter 2>$null; exit 0"
   }
 
   provisioner "local-exec" {
@@ -165,6 +212,9 @@ resource "null_resource" "service_accounts" {
       kubectl annotate serviceaccount keda-operator -n keda `
         eks.amazonaws.com/role-arn=${aws_iam_role.keda_operator.arn} `
         --overwrite
+      # IRSA 어노테이션 적용 후 keda-operator 재시작 — 토큰 재마운트
+      kubectl rollout restart deployment/keda-operator -n keda
+      kubectl rollout status deployment/keda-operator -n keda --timeout=120s
     EOT
   }
 
@@ -190,19 +240,50 @@ resource "null_resource" "install_y2ks" {
   }
 
   provisioner "local-exec" {
+    when        = destroy
+    interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
+    command     = <<-EOT
+      Write-Host "=== [1/3] Karpenter 노드 정리 ==="
+      kubectl delete nodepool --all --ignore-not-found
+      kubectl delete ec2nodeclass --all --ignore-not-found
+
+      Write-Host "=== [2/3] Karpenter 노드 drain 대기 (최대 3분) ==="
+      $timeout = 180
+      $elapsed = 0
+      while ($elapsed -lt $timeout) {
+        $nodes = kubectl get nodes -l karpenter.sh/nodepool --no-headers 2>$null
+        if (-not $nodes) { Write-Host "Karpenter 노드 정리 완료"; break }
+        Write-Host "노드 정리 대기 중... ($elapsed s)"
+        Start-Sleep -Seconds 10
+        $elapsed += 10
+      }
+
+      Write-Host "=== [3/3] Y2KS 앱 삭제 (LoadBalancer → ELB → ENI 정리) ==="
+      helm uninstall y2ks --namespace default 2>$null
+      Write-Host "ELB 삭제 대기 중 (30초)..."
+      Start-Sleep -Seconds 30
+      Write-Host "=== Y2KS 정리 완료 ==="
+    EOT
+  }
+
+  provisioner "local-exec" {
     interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
     command     = <<-EOT
       kubectl wait --for=condition=established crd/scaledobjects.keda.sh --timeout=120s
       kubectl wait --for=condition=established crd/triggerauthentications.keda.sh --timeout=120s
+      kubectl wait --for=condition=established crd/ec2nodeclasses.karpenter.k8s.aws --timeout=120s
+      kubectl wait --for=condition=established crd/nodepools.karpenter.sh --timeout=120s
       helm upgrade --install y2ks ${path.module}/../helm/y2ks `
         --namespace default `
         --set accountId=${data.aws_caller_identity.current.account_id} `
         --set region=${var.aws_region} `
         --set clusterName=${var.cluster_name} `
         --set workerRoleArn=${aws_iam_role.worker.arn} `
-        --set karpenterNodeRoleName=${aws_iam_role.karpenter_node.name}
+        --set karpenterNodeRoleName=${aws_iam_role.karpenter_node.name} `
+        --set images.frontend=${aws_ecr_repository.frontend.repository_url}:latest `
+        --set images.worker=${aws_ecr_repository.worker.repository_url}:latest
     EOT
   }
 
-  depends_on = [null_resource.service_accounts, null_resource.install_karpenter]
+  depends_on = [null_resource.service_accounts, null_resource.install_karpenter, null_resource.install_prometheus, null_resource.build_and_push_images]
 }

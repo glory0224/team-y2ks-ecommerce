@@ -233,3 +233,15 @@ resource "aws_eks_access_policy_association" "team_admin" {
 
   depends_on = [aws_eks_access_entry.team]
 }
+
+# ============================================================
+# Karpenter 노드 EKS 접근 등록
+# 없으면 Karpenter가 프로비저닝한 노드가 클러스터에 조인 불가
+# ============================================================
+resource "aws_eks_access_entry" "karpenter_node" {
+  cluster_name  = aws_eks_cluster.main.name
+  principal_arn = aws_iam_role.karpenter_node.arn
+  type          = "EC2_LINUX"
+
+  depends_on = [aws_eks_cluster.main]
+}

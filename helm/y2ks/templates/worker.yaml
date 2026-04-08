@@ -18,9 +18,9 @@ spec:
       priorityClassName: y2ks-normal
       containers:
       - name: worker
-        image: python:3.9-slim
-        command: ["/bin/sh", "-c"]
-        args: ["pip install boto3 redis && python -u /app/worker.py"]
+        image: "{{ .Values.images.worker }}"
+        command: ["python", "-u"]
+        args: ["/app/worker.py"]
         livenessProbe:
           exec:
             command: ["python", "-c", "import os, sys; sys.exit(0 if os.path.exists('/tmp/worker_alive') else 1)"]
@@ -35,6 +35,8 @@ spec:
             cpu: 200m
             memory: 256Mi
         env:
+        - name: TICKET_COUNT
+          value: "{{ .Values.ticketCount }}"
         - name: SQS_QUEUE_URL
           valueFrom:
             configMapKeyRef:
