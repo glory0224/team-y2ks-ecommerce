@@ -251,7 +251,7 @@ resource "null_resource" "install_y2ks" {
       $timeout = 180
       $elapsed = 0
       while ($elapsed -lt $timeout) {
-        $nodes = kubectl get nodes -l karpenter.sh/nodepool --no-headers 2>$null
+        $nodes = kubectl get nodes -l karpenter.sh/nodepool --no-headers --request-timeout=10s 2>$null
         if (-not $nodes) { Write-Host "Karpenter 노드 정리 완료"; break }
         Write-Host "노드 정리 대기 중... ($elapsed s)"
         Start-Sleep -Seconds 10

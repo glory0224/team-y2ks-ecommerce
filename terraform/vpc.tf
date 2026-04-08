@@ -39,6 +39,11 @@ resource "aws_subnet" "public" {
 resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
 
+  # destroy 순서 보장:
+  # install_y2ks → helm uninstall y2ks → LoadBalancer(ELB) 삭제 → ENI 해제
+  # 완료된 후 IGW 삭제
+  depends_on = [null_resource.install_y2ks]
+
   tags = {
     Name = "${var.cluster_name}-igw"
   }

@@ -112,10 +112,13 @@ resource "aws_eks_node_group" "standard" {
     "alpha.eksctl.io/cluster-name" = var.cluster_name
   }
 
+  # destroy 순서 보장: 노드그룹(ASG)이 IGW보다 먼저 삭제되어야
+  # EC2 인스턴스 → ENI가 해제된 후 IGW 삭제 가능
   depends_on = [
     aws_iam_role_policy_attachment.node_worker,
     aws_iam_role_policy_attachment.node_cni,
     aws_iam_role_policy_attachment.node_ecr,
+    aws_internet_gateway.main,
   ]
 }
 
@@ -141,10 +144,13 @@ resource "aws_eks_node_group" "app" {
     "karpenter.sh/discovery"       = var.cluster_name
   }
 
+  # destroy 순서 보장: 노드그룹(ASG)이 IGW보다 먼저 삭제되어야
+  # EC2 인스턴스 → ENI가 해제된 후 IGW 삭제 가능
   depends_on = [
     aws_iam_role_policy_attachment.node_worker,
     aws_iam_role_policy_attachment.node_cni,
     aws_iam_role_policy_attachment.node_ecr,
+    aws_internet_gateway.main,
   ]
 }
 
