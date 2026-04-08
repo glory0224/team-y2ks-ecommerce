@@ -1,0 +1,92 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: y2ks-frontend
+  labels:
+    app: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "5000"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: worker-sa
+      priorityClassName: y2ks-high
+      containers:
+      - name: web
+        image: python:3.9-slim
+        command: ["/bin/sh", "-c"]
+        args: ["pip install flask boto3 redis gunicorn prometheus-flask-exporter requests && gunicorn --bind 0.0.0.0:5000 --workers 2 --chdir /app app:app"]
+        ports:
+        - containerPort: 5000
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 5000
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 5000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: 100m
+            memory: 200Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        env:
+        - name: PROMETHEUS_URL
+          value: "http://prometheus-server.monitoring.svc.cluster.local:80"
+        - name: SQS_QUEUE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: aws-config
+              key: SQS_QUEUE_URL
+        - name: AWS_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: aws-config
+              key: AWS_REGION
+        - name: DDB_TABLE
+          valueFrom:
+            configMapKeyRef:
+              name: aws-config
+              key: DDB_TABLE
+        volumeMounts:
+        - name: code-volume
+          mountPath: /app
+      volumes:
+      - name: code-volume
+        projected:
+          sources:
+          - configMap:
+              name: y2ks-app-code
+          - configMap:
+              name: y2ks-app-html
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: y2ks-frontend-svc
+spec:
+  type: LoadBalancer
+  selector:
+    app: frontend
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 5000

@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: y2ks-worker
+  labels:
+    app: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      serviceAccountName: worker-sa
+      priorityClassName: y2ks-normal
+      containers:
+      - name: worker
+        image: python:3.9-slim
+        command: ["/bin/sh", "-c"]
+        args: ["pip install boto3 redis && python -u /app/worker.py"]
+        livenessProbe:
+          exec:
+            command: ["python", "-c", "import os, sys; sys.exit(0 if os.path.exists('/tmp/worker_alive') else 1)"]
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: 50m
+            memory: 100Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        env:
+        - name: SQS_QUEUE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: aws-config
+              key: SQS_QUEUE_URL
+        - name: AWS_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: aws-config
+              key: AWS_REGION
+        - name: DDB_TABLE
+          valueFrom:
+            configMapKeyRef:
+              name: aws-config
+              key: DDB_TABLE
+        volumeMounts:
+        - name: code-volume
+          mountPath: /app
+      volumes:
+      - name: code-volume
+        configMap:
+          name: y2ks-app-code
