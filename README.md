@@ -102,9 +102,11 @@ aws configure
 
 ### 2. 배포 (전체 자동화)
 
+> **팀에서 한 명만 실행하면 됩니다.** 나머지 팀원은 아래 [팀원 환경 설정](#팀원-환경-설정) 참고.
+
 ```bash
 cd terraform
-terraform init   # 처음 한 번만
+terraform init   # S3 remote backend 연결 (처음 한 번만)
 terraform apply
 ```
 
@@ -116,6 +118,22 @@ terraform apply
 - KEDA, Karpenter Helm 설치
 - worker-sa ServiceAccount 생성 + IRSA 연결
 - Y2KS 앱 전체 배포 (계정 ID는 aws configure에서 자동으로 읽어옴)
+
+### 팀원 환경 설정
+
+배포는 이미 완료된 상태입니다. 팀원은 아래만 실행하면 됩니다.
+
+```bash
+git pull
+cd terraform
+terraform init   # S3 state 연결 (처음 한 번만)
+
+# kubeconfig 업데이트
+aws eks update-kubeconfig --region ap-northeast-2 --name y2ks-eks-cluster
+
+# 접속 확인
+kubectl get nodes
+```
 
 ### 3. 접속 URL 확인
 
@@ -138,6 +156,8 @@ terraform apply
 ---
 
 ## 클러스터 삭제
+
+> **주의:** S3 state를 공유하므로 한 명이 실행하면 팀 전체 인프라가 삭제됩니다. 팀원에게 사전 공유 후 실행하세요.
 
 ```bash
 cd terraform
