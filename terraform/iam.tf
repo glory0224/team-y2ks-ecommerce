@@ -197,6 +197,7 @@ resource "aws_iam_policy" "karpenter_controller" {
           "ec2:DescribeInstanceTypeOfferings", "ec2:DescribeAvailabilityZones",
           "ec2:DescribeSubnets", "ec2:DescribeSecurityGroups",
           "ec2:DescribeLaunchTemplates", "ec2:DescribeSpotPriceHistory",
+          "ec2:DescribeImages",
           "ec2:CreateFleet", "ec2:CreateLaunchTemplate",
           "ec2:DeleteLaunchTemplate", "ec2:CreateTags",
           "pricing:GetProducts", "ssm:GetParameter",
@@ -208,6 +209,11 @@ resource "aws_iam_policy" "karpenter_controller" {
         Effect   = "Allow"
         Action   = ["iam:PassRole"]
         Resource = aws_iam_role.karpenter_node.arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["iam:GetInstanceProfile", "iam:CreateInstanceProfile", "iam:TagInstanceProfile", "iam:AddRoleToInstanceProfile", "iam:RemoveRoleFromInstanceProfile", "iam:DeleteInstanceProfile"]
+        Resource = "*"
       },
       {
         Effect   = "Allow"
