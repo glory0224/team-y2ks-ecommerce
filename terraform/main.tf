@@ -10,6 +10,14 @@ terraform {
       version = "~> 4.0"
     }
   }
+
+  backend "s3" {
+    bucket         = "y2ks-terraform-state-951913065915"
+    key            = "terraform.tfstate"
+    region         = "ap-northeast-2"
+    dynamodb_table = "y2ks-terraform-lock"
+    encrypt        = true
+  }
 }
 
 provider "aws" {
@@ -34,28 +42,32 @@ resource "null_resource" "check_prerequisites" {
   }
 
   provisioner "local-exec" {
-    interpreter = ["bash", "-c"]
+    interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
     command     = <<-EOT
-      echo "=== 사전 요구사항 확인 ==="
-      if ! aws --version > /dev/null 2>&1; then
-        echo "[ERROR] aws cli가 설치되어 있지 않습니다. https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2.html"
-        exit 1
-      fi
-      echo "[OK] aws cli: $(aws --version 2>&1)"
+      Write-Host "=== 사전 요구사항 확인 ==="
 
-      if ! kubectl version --client > /dev/null 2>&1; then
-        echo "[ERROR] kubectl이 설치되어 있지 않습니다. https://kubernetes.io/docs/tasks/tools/"
+      & aws --version 2>&1 | Out-Null
+      if ($LASTEXITCODE -ne 0) {
+        Write-Host "[ERROR] aws cli가 설치되어 있지 않습니다. https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2.html"
         exit 1
-      fi
-      echo "[OK] kubectl: $(kubectl version --client 2>&1 | head -1)"
+      }
+      Write-Host "[OK] aws cli"
 
-      if ! helm version > /dev/null 2>&1; then
-        echo "[ERROR] helm이 설치되어 있지 않습니다. https://helm.sh/docs/intro/install/"
+      & kubectl version --client 2>&1 | Out-Null
+      if ($LASTEXITCODE -ne 0) {
+        Write-Host "[ERROR] kubectl이 설치되어 있지 않습니다. https://kubernetes.io/docs/tasks/tools/"
         exit 1
-      fi
-      echo "[OK] helm: $(helm version --short 2>&1)"
+      }
+      Write-Host "[OK] kubectl"
 
-      echo "=== 모든 사전 요구사항 충족 ==="
+      & helm version 2>&1 | Out-Null
+      if ($LASTEXITCODE -ne 0) {
+        Write-Host "[ERROR] helm이 설치되어 있지 않습니다. https://helm.sh/docs/intro/install/"
+        exit 1
+      }
+      Write-Host "[OK] helm"
+
+      Write-Host "=== 모든 사전 요구사항 충족 ==="
     EOT
   }
 }
@@ -69,7 +81,7 @@ resource "null_resource" "kubeconfig" {
   }
 
   provisioner "local-exec" {
-    interpreter = ["bash", "-c"]
+    interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
     command     = "aws eks update-kubeconfig --name ${aws_eks_cluster.main.name} --region ${var.aws_region}"
   }
 
@@ -93,13 +105,13 @@ resource "null_resource" "install_keda" {
   }
 
   provisioner "local-exec" {
-    interpreter = ["bash", "-c"]
+    interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
     command     = <<-EOT
       helm repo add kedacore https://kedacore.github.io/charts
       helm repo update
-      helm upgrade --install keda kedacore/keda \
-        --namespace keda --create-namespace \
-        --version 2.16.0 \
+      helm upgrade --install keda kedacore/keda `
+        --namespace keda --create-namespace `
+        --version 2.16.0 `
         --wait --timeout 5m
     EOT
   }
@@ -116,15 +128,15 @@ resource "null_resource" "install_karpenter" {
   }
 
   provisioner "local-exec" {
-    interpreter = ["bash", "-c"]
+    interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
     command     = <<-EOT
-      helm upgrade --install karpenter oci://public.ecr.aws/karpenter/karpenter \
-        --version 1.1.1 \
-        --namespace karpenter --create-namespace \
-        --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=${aws_iam_role.karpenter_controller.arn}" \
-        --set "settings.clusterName=${var.cluster_name}" \
-        --set "settings.clusterEndpoint=${aws_eks_cluster.main.endpoint}" \
-        --set "settings.interruptionQueue=KarpenterInterruption-${var.cluster_name}" \
+      helm upgrade --install karpenter oci://public.ecr.aws/karpenter/karpenter `
+        --version 1.1.1 `
+        --namespace karpenter --create-namespace `
+        --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=${aws_iam_role.karpenter_controller.arn}" `
+        --set "settings.clusterName=${var.cluster_name}" `
+        --set "settings.clusterEndpoint=${aws_eks_cluster.main.endpoint}" `
+        --set "settings.interruptionQueue=KarpenterInterruption-${var.cluster_name}" `
         --wait --timeout 5m
     EOT
   }
@@ -144,14 +156,14 @@ resource "null_resource" "service_accounts" {
   }
 
   provisioner "local-exec" {
-    interpreter = ["bash", "-c"]
+    interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
     command     = <<-EOT
       kubectl create serviceaccount worker-sa --dry-run=client -o yaml | kubectl apply -f -
-      kubectl annotate serviceaccount worker-sa \
-        eks.amazonaws.com/role-arn=${aws_iam_role.worker.arn} \
+      kubectl annotate serviceaccount worker-sa `
+        eks.amazonaws.com/role-arn=${aws_iam_role.worker.arn} `
         --overwrite
-      kubectl annotate serviceaccount keda-operator -n keda \
-        eks.amazonaws.com/role-arn=${aws_iam_role.keda_operator.arn} \
+      kubectl annotate serviceaccount keda-operator -n keda `
+        eks.amazonaws.com/role-arn=${aws_iam_role.keda_operator.arn} `
         --overwrite
     EOT
   }
@@ -178,16 +190,16 @@ resource "null_resource" "install_y2ks" {
   }
 
   provisioner "local-exec" {
-    interpreter = ["bash", "-c"]
+    interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
     command     = <<-EOT
       kubectl wait --for=condition=established crd/scaledobjects.keda.sh --timeout=120s
       kubectl wait --for=condition=established crd/triggerauthentications.keda.sh --timeout=120s
-      helm upgrade --install y2ks ${path.module}/../helm/y2ks \
-        --namespace default \
-        --set accountId=${data.aws_caller_identity.current.account_id} \
-        --set region=${var.aws_region} \
-        --set clusterName=${var.cluster_name} \
-        --set workerRoleArn=${aws_iam_role.worker.arn} \
+      helm upgrade --install y2ks ${path.module}/../helm/y2ks `
+        --namespace default `
+        --set accountId=${data.aws_caller_identity.current.account_id} `
+        --set region=${var.aws_region} `
+        --set clusterName=${var.cluster_name} `
+        --set workerRoleArn=${aws_iam_role.worker.arn} `
         --set karpenterNodeRoleName=${aws_iam_role.karpenter_node.name}
     EOT
   }
