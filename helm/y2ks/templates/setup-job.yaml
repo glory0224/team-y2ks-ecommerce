@@ -1,0 +1,38 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: aws-infra-setup
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      serviceAccountName: worker-sa
+      restartPolicy: OnFailure
+      containers:
+      - name: setup
+        image: python:3.9-slim
+        command: ["/bin/sh", "-c"]
+        args: ["pip install boto3 -q && python /app/setup.py"]
+        env:
+        - name: AWS_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: aws-config
+              key: AWS_REGION
+        - name: DDB_TABLE
+          valueFrom:
+            configMapKeyRef:
+              name: aws-config
+              key: DDB_TABLE
+        - name: SQS_QUEUE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: aws-config
+              key: SQS_QUEUE_URL
+        volumeMounts:
+        - name: code-volume
+          mountPath: /app
+      volumes:
+      - name: code-volume
+        configMap:
+          name: y2ks-app-code

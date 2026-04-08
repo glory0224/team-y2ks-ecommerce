@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: concert-app-html
+  name: y2ks-app-html
 data:
   main.html: |
     <!DOCTYPE html>
@@ -16,7 +16,7 @@ data:
     :root{--black:#0a0a0a;--white:#fff;--g100:#f5f5f5;--g200:#e8e8e8;--g400:#9e9e9e;--g600:#555;--accent:#c8a96e;--accent-d:#a8803e}
     body{font-family:'Nanum Gothic',sans-serif;background:var(--white);color:var(--black);overflow-x:hidden}
     a{text-decoration:none;color:inherit}
-    .top-bar{background:var(--black);color:rgba(255,255,255,0.85);text-align:center;padding:10px 20px;font-size:12px;letter-spacing:.5px}
+    .top-bar{background:var(--black);color:rgba(255,255,255,0.85);text-align:center;padding:10px 20px;font-size:12px;letter-spacing:.5px}ㄴ
     .top-bar a{color:var(--accent);font-weight:700;margin-left:8px;text-decoration:underline;transition:color .2s}
     .top-bar a:hover{color:#fff}
     .header{position:sticky;top:0;z-index:100;background:rgba(255,255,255,.97);backdrop-filter:blur(12px);border-bottom:1px solid var(--g200);padding:0 48px}
@@ -678,7 +678,7 @@ data:
         podsHistory.push({ ts: now, label: label, val: k8sData.worker_pods || 0 });
         if (podsHistory.length > HISTORY_MAX) podsHistory.shift();
       } catch(e) {
-        var pods = await fetchInstant('kube_deployment_status_replicas{deployment="concert-worker"}');
+        var pods = await fetchInstant('kube_deployment_status_replicas{deployment="y2ks-worker"}');
         if (pods !== null) document.getElementById('s-worker-pods').textContent = Math.round(pods);
       }
 
@@ -686,7 +686,7 @@ data:
       if (statsData) document.getElementById('s-queue-pods').textContent = statsData.queue_depth;
 
       // Prometheus 먼저 시도, 실패 시 podsHistory로 차트 구성
-      var workerData = await fetchRange('kube_deployment_status_replicas{deployment="concert-worker"}', start, now, '30s');
+      var workerData = await fetchRange('kube_deployment_status_replicas{deployment="y2ks-worker"}', start, now, '30s');
       if (!workerData && podsHistory.length > 1) {
         // K8s API 폴링 데이터로 가짜 workerData 구성
         workerData = [{ values: podsHistory.map(function(h){ return [h.ts, String(h.val)]; }) }];

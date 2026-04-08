@@ -34,8 +34,8 @@ KEDA + Karpenter로 트래픽 스파이크를 자동 대응합니다.
 
 | 서비스 | 역할 | 기술 |
 |--------|------|------|
-| concert-frontend | 쇼핑몰 UI + API 서버 (메인/이벤트/관리자 페이지) | Flask + Gunicorn |
-| concert-worker | SQS 메시지 소비 → 쿠폰 당첨/낙첨 판정 | Python + boto3 |
+| y2ks-frontend | 쇼핑몰 UI + API 서버 (메인/이벤트/관리자 페이지) | Flask + Gunicorn |
+| y2ks-worker | SQS 메시지 소비 → 쿠폰 당첨/낙첨 판정 | Python + boto3 |
 | Redis | 실시간 티켓 카운터 + 결과 임시 저장 | Redis Alpine |
 | DynamoDB | 쿠폰 발급 이력 영구 저장 | AWS DynamoDB (PAY_PER_REQUEST) |
 | SES | 당첨자 쿠폰 이메일 발송 | AWS SES |
@@ -48,120 +48,100 @@ KEDA + Karpenter로 트래픽 스파이크를 자동 대응합니다.
 
 ```
 .
-├── terraform/                  # AWS 인프라 (EKS, VPC, IAM, DynamoDB, SQS)
-│   ├── main.tf                 # Provider 설정
-│   ├── variables.tf            # 변수 (cluster_name, account_id, region 등)
+├── terraform/                  # AWS 인프라 + 전체 배포 자동화
+│   ├── main.tf                 # 사전 요구사항 확인, kubeconfig, KEDA/Karpenter/앱 배포
+│   ├── variables.tf            # 변수 (cluster_name, region, team_member_usernames 등)
 │   ├── vpc.tf                  # VPC, 서브넷, 라우팅
-│   ├── eks.tf                  # EKS 클러스터, 노드그룹, 애드온, OIDC
+│   ├── eks.tf                  # EKS 클러스터, 노드그룹, 애드온, OIDC, 접근 권한
 │   ├── iam.tf                  # IAM Role/Policy (Worker, KEDA, Karpenter)
 │   ├── dynamodb.tf             # DynamoDB 쿠폰 클레임 테이블
 │   └── outputs.tf              # 배포 후 참조값 출력 + next_steps 안내
 │
-├── app-deployment.yaml         # K8s 리소스 (PriorityClass, RBAC, ConfigMap, Deployment, Service)
-├── configmap-code.yaml         # Python 코드 (app.py, worker.py, setup.py)
-├── configmap-html.yaml         # HTML 페이지 (main.html, event.html, admin.html)
-├── redis.yaml                  # Redis Deployment + Service
-├── karpenter-nodepool.yaml     # Karpenter EC2NodeClass + NodePool
-└── keda-scaledobject.yaml      # KEDA ScaledObject + TriggerAuthentication
+└── helm/y2ks/                  # Y2KS 앱 Helm 차트
+    ├── Chart.yaml
+    ├── values.yaml             # 변수 정의 (terraform apply 시 자동 주입)
+    └── templates/
+        ├── aws-config.yaml     # AWS 설정 ConfigMap (SQS URL, Region, DDB 테이블)
+        ├── configmap-code.yaml # Python 코드 (app.py, worker.py, setup.py)
+        ├── configmap-html.yaml # HTML 페이지 (main, event, admin)
+        ├── frontend.yaml       # Frontend Deployment + LoadBalancer Service
+        ├── worker.yaml         # Worker Deployment
+        ├── redis.yaml          # Redis Deployment + Service
+        ├── keda.yaml           # KEDA ScaledObject + TriggerAuthentication
+        ├── karpenter.yaml      # Karpenter EC2NodeClass + NodePool
+        ├── priority-classes.yaml
+        ├── rbac.yaml
+        └── setup-job.yaml      # SQS/DynamoDB 초기화 Job
 ```
 
 ---
 
-## 배포 순서
+## 사전 요구사항
 
-### 사전 준비
+아래 도구들이 로컬에 설치되어 있어야 합니다. `terraform apply` 시 자동으로 확인하며 없으면 설치 링크와 함께 오류를 출력합니다.
+
+| 도구 | 설치 링크 |
+|------|-----------|
+| AWS CLI | https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2.html |
+| Terraform ≥ 1.5 | https://developer.hashicorp.com/terraform/install |
+| kubectl | https://kubernetes.io/docs/tasks/tools/ |
+| Helm | https://helm.sh/docs/intro/install/ |
+
+---
+
+## 배포 방법
+
+### 1. AWS 자격증명 설정
 
 ```bash
-# variables.tf에서 본인 환경에 맞게 수정
-# - account_id: 본인 AWS 계정 ID
-# - sender_email: SES에서 인증된 이메일
+aws configure
+# AWS Access Key ID: 본인 키 입력
+# AWS Secret Access Key: 본인 시크릿 입력
+# Default region name: ap-northeast-2
 ```
 
-### 1. Terraform으로 인프라 생성 (20~30분 소요)
+### 2. 배포 (전체 자동화)
 
 ```bash
 cd terraform
-terraform init
+terraform init   # 처음 한 번만
 terraform apply
 ```
 
-생성되는 리소스: VPC, EKS 클러스터(y2ks-eks-cluster), 노드그룹, IAM Role/Policy, DynamoDB 테이블, Karpenter SQS 큐
+`terraform apply` 한 번으로 아래가 모두 자동 실행됩니다:
 
-### 2. kubectl 연결
+- VPC / EKS 클러스터 / IAM / DynamoDB 생성
+- 실행한 IAM 유저에게 kubectl 접근 권한 자동 부여
+- kubeconfig 자동 업데이트
+- KEDA, Karpenter Helm 설치
+- worker-sa ServiceAccount 생성 + IRSA 연결
+- Y2KS 앱 전체 배포 (계정 ID는 aws configure에서 자동으로 읽어옴)
 
-```bash
-aws eks update-kubeconfig --region ap-northeast-2 --name y2ks-eks-cluster
-kubectl get nodes  # 노드 확인
-```
-
-### 3. EKS 접근 권한 추가 (팀원 각자 실행)
-
-```bash
-aws eks create-access-entry \
-  --cluster-name y2ks-eks-cluster \
-  --principal-arn arn:aws:iam::<ACCOUNT_ID>:user/<IAM_USERNAME> \
-  --type STANDARD
-
-aws eks associate-access-policy \
-  --cluster-name y2ks-eks-cluster \
-  --principal-arn arn:aws:iam::<ACCOUNT_ID>:user/<IAM_USERNAME> \
-  --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy \
-  --access-scope type=cluster
-```
-
-### 4. worker-sa ServiceAccount 생성
+### 3. 접속 URL 확인
 
 ```bash
-kubectl create serviceaccount worker-sa
-kubectl annotate serviceaccount worker-sa \
-  eks.amazonaws.com/role-arn=$(cd terraform && terraform output -raw worker_role_arn)
-```
-
-### 5. 앱 배포
-
-```bash
-kubectl apply -f redis.yaml
-kubectl apply -f configmap-code.yaml
-kubectl apply -f configmap-html.yaml
-kubectl apply -f app-deployment.yaml
-
-kubectl get pods -w  # 파드 상태 확인
-```
-
-### 6. KEDA 설치
-
-```bash
-helm repo add kedacore https://kedacore.github.io/charts && helm repo update
-helm install keda kedacore/keda --namespace keda --create-namespace
-
-kubectl annotate serviceaccount keda-operator -n keda \
-  eks.amazonaws.com/role-arn=$(cd terraform && terraform output -raw keda_operator_role_arn)
-
-kubectl apply -f keda-scaledobject.yaml
-```
-
-### 7. Karpenter 설치
-
-```bash
-CLUSTER_ENDPOINT=$(aws eks describe-cluster --name y2ks-eks-cluster \
-  --query 'cluster.endpoint' --output text)
-
-helm install karpenter oci://public.ecr.aws/karpenter/karpenter \
-  --version 1.1.1 \
-  --namespace karpenter --create-namespace \
-  --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=$(cd terraform && terraform output -raw karpenter_controller_role_arn) \
-  --set settings.clusterName=y2ks-eks-cluster \
-  --set settings.clusterEndpoint=$CLUSTER_ENDPOINT \
-  --set settings.interruptionQueue=KarpenterInterruption-y2ks-eks-cluster
-
-kubectl apply -f karpenter-nodepool.yaml
-```
-
-### 8. 접속 URL 확인
-
-```bash
-kubectl get svc concert-frontend-svc
+kubectl get svc y2ks-frontend-svc
 # EXTERNAL-IP 컬럼의 주소로 브라우저 접속
+```
+
+---
+
+## 코드 수정 후 재배포
+
+```bash
+cd terraform
+terraform apply
+```
+
+`helm/y2ks/templates/` 안의 파일이 변경되면 `terraform apply` 시 자동으로 감지하여 재배포합니다.
+
+---
+
+## 클러스터 삭제
+
+```bash
+cd terraform
+terraform destroy
 ```
 
 ---
@@ -196,13 +176,3 @@ kubectl get svc concert-frontend-svc
 | `y2ks-critical` | 100,000 | Redis | 절대 선점 불가 |
 | `y2ks-high` | 10,000 | Frontend | 트래픽 스파이크 시에도 항상 보장 |
 | `y2ks-normal` | 1,000 | Worker | 리소스 부족 시 선점 허용 |
-
----
-
-## 클러스터 삭제
-
-```bash
-helm uninstall karpenter -n karpenter
-helm uninstall keda -n keda
-cd terraform && terraform destroy
-```

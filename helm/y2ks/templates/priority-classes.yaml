@@ -1,0 +1,23 @@
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: y2ks-critical
+value: 100000
+globalDefault: false
+description: "Redis 등 전체 시스템의 기반이 되는 핵심 서비스 - 절대 선점 불가"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: y2ks-high
+value: 10000
+globalDefault: false
+description: "사용자 접속 프론트엔드 - 트래픽 스파이크 시에도 항상 보장"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: y2ks-normal
+value: 1000
+globalDefault: true
+description: "KEDA Worker - 이벤트 처리용, 리소스 부족 시 선점 허용"
