@@ -234,6 +234,7 @@ terraform destroy
 | DynamoDB 테이블 | y2ks-coupon-claims |
 | KEDA 스케일 범위 | Worker 1 ~ 50개 |
 | KEDA 트리거 | 메시지 5개당 Worker 1개 |
+| 기본 노드그룹 | system-nodes t3.small × 2 (시스템·앱 파드 공용) |
 | Karpenter 인스턴스 | t3.small (Spot + On-demand) |
 | 발신 이메일 | wooseoyun@naver.com |
 
