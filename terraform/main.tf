@@ -108,7 +108,7 @@ resource "null_resource" "install_prometheus" {
   provisioner "local-exec" {
     when        = destroy
     interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
-    command     = "helm uninstall prometheus --namespace monitoring 2>$null; exit 0"
+    command     = "helm uninstall prometheus --namespace monitoring --timeout 2m0s 2>$null; exit 0"
   }
 
   provisioner "local-exec" {
@@ -142,7 +142,7 @@ resource "null_resource" "install_keda" {
   provisioner "local-exec" {
     when        = destroy
     interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
-    command     = "helm uninstall keda --namespace keda 2>$null; exit 0"
+    command     = "helm uninstall keda --namespace keda --timeout 2m0s 2>$null; exit 0"
   }
 
   provisioner "local-exec" {
@@ -171,7 +171,7 @@ resource "null_resource" "install_karpenter" {
   provisioner "local-exec" {
     when        = destroy
     interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
-    command     = "helm uninstall karpenter --namespace karpenter 2>$null; exit 0"
+    command     = "helm uninstall karpenter --namespace karpenter --timeout 2m0s 2>$null; exit 0"
   }
 
   provisioner "local-exec" {
@@ -243,25 +243,40 @@ resource "null_resource" "install_y2ks" {
     when        = destroy
     interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
     command     = <<-EOT
-      Write-Host "=== [1/3] Karpenter 노드 정리 ==="
-      kubectl delete nodepool --all --ignore-not-found
-      kubectl delete ec2nodeclass --all --ignore-not-found
+      Write-Host "=== [1/3] Karpenter ASG 직접 삭제 ==="
+      # Karpenter가 만든 ASG를 AWS CLI로 직접 삭제 (Karpenter가 죽어있어도 동작)
+      $asgs = aws autoscaling describe-auto-scaling-groups `
+        --query "AutoScalingGroups[?contains(Tags[?Key=='karpenter.sh/nodepool'].Value, 'default')].AutoScalingGroupName" `
+        --output text 2>$null
+      if ($asgs) {
+        foreach ($asg in $asgs -split "`t") {
+          if ($asg) {
+            Write-Host "ASG 삭제 중: $asg"
+            aws autoscaling delete-auto-scaling-group --auto-scaling-group-name $asg --force-delete
+          }
+        }
+        Write-Host "ASG 삭제 요청 완료. EC2 terminate 대기 중 (60초)..."
+        Start-Sleep -Seconds 60
+      } else {
+        Write-Host "Karpenter ASG 없음 — 건너뜀"
+      }
 
-      Write-Host "=== [2/3] Karpenter 노드 drain 대기 (최대 3분) ==="
+      Write-Host "=== [2/3] Y2KS 앱 삭제 (LoadBalancer → ELB → ENI 정리) ==="
+      helm uninstall y2ks --namespace default --timeout 2m0s 2>$null
+
+      Write-Host "ELB 삭제 확인 중 (최대 3분)..."
+      $vpcId = aws ec2 describe-vpcs --filters "Name=tag:Name,Values=${self.triggers.cluster_name}-vpc" --query "Vpcs[0].VpcId" --output text 2>$null
       $timeout = 180
       $elapsed = 0
       while ($elapsed -lt $timeout) {
-        $nodes = kubectl get nodes -l karpenter.sh/nodepool --no-headers --request-timeout=10s 2>$null
-        if (-not $nodes) { Write-Host "Karpenter 노드 정리 완료"; break }
-        Write-Host "노드 정리 대기 중... ($elapsed s)"
+        $classicElbs = (aws elb describe-load-balancers --query "LoadBalancerDescriptions[?VPCId=='$vpcId'].LoadBalancerName" --output text 2>$null).Trim()
+        $v2Elbs = (aws elbv2 describe-load-balancers --query "LoadBalancers[?VpcId=='$vpcId'].LoadBalancerArn" --output text 2>$null).Trim()
+        if ([string]::IsNullOrEmpty($classicElbs) -and [string]::IsNullOrEmpty($v2Elbs)) { Write-Host "ELB 삭제 완료 확인"; break }
+        Write-Host "ELB 삭제 대기 중... ($elapsed s)"
         Start-Sleep -Seconds 10
         $elapsed += 10
       }
-
-      Write-Host "=== [3/3] Y2KS 앱 삭제 (LoadBalancer → ELB → ENI 정리) ==="
-      helm uninstall y2ks --namespace default 2>$null
-      Write-Host "ELB 삭제 대기 중 (30초)..."
-      Start-Sleep -Seconds 30
+      if ($elapsed -ge $timeout) { Write-Host "[WARN] ELB 삭제 타임아웃 — 수동 확인 필요" }
       Write-Host "=== Y2KS 정리 완료 ==="
     EOT
   }
