@@ -100,50 +100,22 @@ resource "aws_iam_role_policy_attachment" "node_ecr" {
 }
 
 # ============================================================
-# 노드그룹 1: standard-nodes (t3.micro - 시스템 파드 전용)
+# 노드그룹: system-nodes (t3.small × 2 - 시스템·앱 파드 공용)
+# - t3.micro(MaxPods=4) 대신 t3.small(MaxPods=11) 사용
+# - 2개 노드로 시스템 파드 + 기본 앱 파드 수용
+# - 부하 발생 시 Karpenter가 노드 자동 추가
 # ============================================================
 resource "aws_eks_node_group" "standard" {
   cluster_name    = aws_eks_cluster.main.name
-  node_group_name = "standard-nodes"
-  node_role_arn   = aws_iam_role.node_group.arn
-  subnet_ids      = aws_subnet.public[*].id
-  instance_types  = ["t3.micro"]
-
-  scaling_config {
-    desired_size = 2
-    min_size     = 2
-    max_size     = 4
-  }
-
-  tags = {
-    "alpha.eksctl.io/cluster-name" = var.cluster_name
-  }
-
-  # destroy 순서 보장: 노드그룹(ASG)이 IGW보다 먼저 삭제되어야
-  # EC2 인스턴스 → ENI가 해제된 후 IGW 삭제 가능
-  depends_on = [
-    aws_iam_role_policy_attachment.node_worker,
-    aws_iam_role_policy_attachment.node_cni,
-    aws_iam_role_policy_attachment.node_ecr,
-    aws_internet_gateway.main,
-  ]
-}
-
-# ============================================================
-# 노드그룹 2: app-nodes (t3.small - 앱 파드 전용)
-# t3.micro는 MaxPods=4로 부족 → t3.small = MaxPods=11
-# ============================================================
-resource "aws_eks_node_group" "app" {
-  cluster_name    = aws_eks_cluster.main.name
-  node_group_name = "app-nodes"
+  node_group_name = "system-nodes"
   node_role_arn   = aws_iam_role.node_group.arn
   subnet_ids      = aws_subnet.public[*].id
   instance_types  = ["t3.small"]
 
   scaling_config {
     desired_size = 2
-    min_size     = 1
-    max_size     = 10
+    min_size     = 2
+    max_size     = 4
   }
 
   tags = {
