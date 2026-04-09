@@ -25,5 +25,5 @@ variable "sender_email" {
 variable "team_member_usernames" {
   description = "EKS 클러스터 접근 권한을 부여할 IAM 유저명 목록 (terraform apply 시 자동으로 kubectl 권한 부여)"
   type        = list(string)
-  default     = ["user01", "user02", "user04"]
+  default     = ["user01", "user02", "user03", "user04"]
 }

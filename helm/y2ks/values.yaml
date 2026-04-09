@@ -13,7 +13,12 @@ karpenterNodeRoleName: ""
 # ============================================================
 queueName: "y2ks-queue"
 ddbTable: "y2ks-coupon-claims"
-senderEmail: "tjzns20@gmail.com"
+senderEmail: "wooseoyun@naver.com"
+ticketCount: 100
+
+images:
+  frontend: ""  # terraform apply 시 자동 주입 — 직접 수정 금지
+  worker: ""    # terraform apply 시 자동 주입 — 직접 수정 금지
 
 worker:
   minReplicas: 1

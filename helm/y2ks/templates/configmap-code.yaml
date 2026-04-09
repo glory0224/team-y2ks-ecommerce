@@ -21,7 +21,8 @@ data:
     AWS_REGION = os.environ.get('AWS_REGION', 'ap-northeast-2')
     QUEUE_URL = os.environ.get('SQS_QUEUE_URL', '')
     DDB_TABLE = os.environ.get('DDB_TABLE', 'y2ks-coupon-claims')
-    SENDER_EMAIL = 'tjzns20@gmail.com'
+    SENDER_EMAIL = 'wooseoyun@naver.com'
+    TICKET_COUNT = int(os.environ.get('TICKET_COUNT', '100'))
 
     r = redis.Redis(host=REDIS_HOST, port=6379, db=0, decode_responses=True)
     sqs_client = boto3.client('sqs', region_name=AWS_REGION)
@@ -44,12 +45,36 @@ data:
     def event():
         return EVENT_HTML
 
+    def restore_tickets_from_ddb():
+        """Redis 재시작 시 DynamoDB 당첨 수 기반으로 남은 티켓 복구"""
+        try:
+            ddb = boto3.resource('dynamodb', region_name=AWS_REGION)
+            table = ddb.Table(DDB_TABLE)
+            scan_kw = {
+                'FilterExpression': '#s = :w',
+                'ExpressionAttributeNames': {'#s': 'status'},
+                'ExpressionAttributeValues': {':w': 'winner'},
+                'Select': 'COUNT'
+            }
+            winners = 0
+            while True:
+                resp = table.scan(**scan_kw)
+                winners += resp['Count']
+                if 'LastEvaluatedKey' not in resp:
+                    break
+                scan_kw['ExclusiveStartKey'] = resp['LastEvaluatedKey']
+            return max(TICKET_COUNT - winners, 0)
+        except Exception as e:
+            print(f'DynamoDB restore error: {e}', flush=True)
+            return 0
+
     @app.route('/api/tickets')
     def get_tickets():
         val = r.get('tickets')
         if val is None:
-            r.set('tickets', 100)
-            val = '100'
+            remaining = restore_tickets_from_ddb()
+            r.set('tickets', remaining, nx=True)
+            val = str(remaining)
         return jsonify({'remaining': int(val)})
 
     @app.route('/api/claim', methods=['POST'])
@@ -81,7 +106,7 @@ data:
         if tickets_left is None:
             tickets_left = 100
         tickets_left = int(tickets_left)
-        claimed = 100 - max(tickets_left, 0)
+        claimed = TICKET_COUNT - max(tickets_left, 0)
         try:
             ddb = boto3.resource('dynamodb', region_name=AWS_REGION)
             table = ddb.Table(DDB_TABLE)
@@ -203,7 +228,7 @@ data:
     @app.route('/api/admin/reset', methods=['POST'])
     def admin_reset():
         # Redis 초기화
-        r.set('tickets', 100)
+        r.set('tickets', TICKET_COUNT)
         # SQS 큐 비우기 (대기 중인 메시지 모두 삭제)
         try:
             while True:
@@ -230,7 +255,7 @@ data:
                         batch.delete_item(Key={'request_id': item['request_id']})
         except Exception as e:
             print(f'DynamoDB reset warning: {e}', flush=True)
-        return jsonify({'success': True, 'message': '티켓 100장, SQS 큐, DynamoDB 기록이 초기화되었습니다.'})
+        return jsonify({'success': True, 'message': f'티켓 {TICKET_COUNT}장, SQS 큐, DynamoDB 기록이 초기화되었습니다.'})
 
     @app.route('/api/submit-email', methods=['POST'])
     def submit_email():
@@ -282,6 +307,7 @@ data:
     AWS_REGION = os.environ.get('AWS_REGION', 'ap-northeast-2')
     QUEUE_URL = os.environ.get('SQS_QUEUE_URL', '')
     DDB_TABLE = os.environ.get('DDB_TABLE', 'y2ks-coupon-claims')
+    TICKET_COUNT = int(os.environ.get('TICKET_COUNT', '100'))
 
     r = redis.Redis(host=REDIS_HOST, port=6379, db=0, decode_responses=True)
     sqs = boto3.client('sqs', region_name=AWS_REGION)
@@ -325,7 +351,7 @@ data:
                 scan_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
                 response = table.scan(**scan_kwargs)
                 winners += response['Count']
-            remaining = max(100 - winners, 0)
+            remaining = max(TICKET_COUNT - winners, 0)
             print(f'Redis restored from DynamoDB: {winners} winners, tickets={remaining}', flush=True)
             return remaining
         except Exception as e:
@@ -371,44 +397,4 @@ data:
             print(f'Queue error: {e}', flush=True)
             time.sleep(2)
 
-  setup.py: |
-    # AWS 인프라 초기화 스크립트
-    # Job(aws-infra-setup)에 의해 배포 시 한 번 실행됩니다.
-    # SQS 큐와 DynamoDB 테이블이 없으면 생성합니다.
-    import boto3, os, sys
-
-    region = os.environ.get('AWS_REGION', 'ap-northeast-2')
-    # SQS_QUEUE_URL에서 큐 이름 추출 (URL 마지막 경로 = 큐 이름)
-    queue_url_env = os.environ.get('SQS_QUEUE_URL', '')
-    queue_name = queue_url_env.split('/')[-1] if queue_url_env else 'y2ks-queue'
-    table_name = os.environ.get('DDB_TABLE', 'y2ks-coupon-claims')
-
-    print('=== AWS Infrastructure Setup ===', flush=True)
-
-    # SQS 큐 생성
-    sqs = boto3.client('sqs', region_name=region)
-    try:
-        r = sqs.create_queue(QueueName=queue_name)
-        print(f'[OK] SQS queue created: {r["QueueUrl"]}', flush=True)
-    except sqs.exceptions.QueueNameExists:
-        print(f'[OK] SQS queue already exists: {queue_name}', flush=True)
-    except Exception as e:
-        print(f'[FAIL] SQS error: {e}', file=sys.stderr, flush=True)
-
-    # DynamoDB 테이블 생성
-    ddb = boto3.client('dynamodb', region_name=region)
-    try:
-        ddb.create_table(
-            TableName=table_name,
-            AttributeDefinitions=[{'AttributeName': 'request_id', 'AttributeType': 'S'}],
-            KeySchema=[{'AttributeName': 'request_id', 'KeyType': 'HASH'}],
-            BillingMode='PAY_PER_REQUEST'
-        )
-        print(f'[OK] DynamoDB table created: {table_name}', flush=True)
-    except ddb.exceptions.ResourceInUseException:
-        print(f'[OK] DynamoDB table already exists: {table_name}', flush=True)
-    except Exception as e:
-        print(f'[FAIL] DynamoDB error: {e}', file=sys.stderr, flush=True)
-
-    print('=== Setup complete ===', flush=True)
 

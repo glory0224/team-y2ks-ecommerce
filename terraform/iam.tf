@@ -197,8 +197,10 @@ resource "aws_iam_policy" "karpenter_controller" {
           "ec2:DescribeInstanceTypeOfferings", "ec2:DescribeAvailabilityZones",
           "ec2:DescribeSubnets", "ec2:DescribeSecurityGroups",
           "ec2:DescribeLaunchTemplates", "ec2:DescribeSpotPriceHistory",
+          "ec2:DescribeImages",
           "ec2:CreateFleet", "ec2:CreateLaunchTemplate",
           "ec2:DeleteLaunchTemplate", "ec2:CreateTags",
+          "ec2:DescribeImages",
           "pricing:GetProducts", "ssm:GetParameter",
           "eks:DescribeCluster"
         ]
@@ -208,6 +210,23 @@ resource "aws_iam_policy" "karpenter_controller" {
         Effect   = "Allow"
         Action   = ["iam:PassRole"]
         Resource = aws_iam_role.karpenter_node.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "iam:GetInstanceProfile",
+          "iam:CreateInstanceProfile",
+          "iam:AddRoleToInstanceProfile",
+          "iam:RemoveRoleFromInstanceProfile",
+          "iam:DeleteInstanceProfile",
+          "iam:TagInstanceProfile"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["iam:GetInstanceProfile", "iam:CreateInstanceProfile", "iam:TagInstanceProfile", "iam:AddRoleToInstanceProfile", "iam:RemoveRoleFromInstanceProfile", "iam:DeleteInstanceProfile"]
+        Resource = "*"
       },
       {
         Effect   = "Allow"
@@ -231,4 +250,79 @@ resource "aws_sqs_queue" "karpenter_interruption" {
   name                      = "KarpenterInterruption-${var.cluster_name}"
   message_retention_seconds = 300
   sqs_managed_sse_enabled   = true
+}
+
+# EventBridge가 이 큐로 메시지를 보낼 수 있도록 큐 정책 부여
+resource "aws_sqs_queue_policy" "karpenter_interruption" {
+  queue_url = aws_sqs_queue.karpenter_interruption.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "events.amazonaws.com" }
+      Action    = "sqs:SendMessage"
+      Resource  = aws_sqs_queue.karpenter_interruption.arn
+    }]
+  })
+}
+
+# ============================================================
+# Karpenter EventBridge 규칙 — Spot 인터럽트 이벤트 수신
+# 없으면 큐가 있어도 이벤트가 들어오지 않아 Spot 종료를 미리 감지 불가
+# ============================================================
+resource "aws_cloudwatch_event_rule" "karpenter_spot_interruption" {
+  name          = "KarpenterSpotInterruption-${var.cluster_name}"
+  description   = "Karpenter: EC2 Spot 인터럽트 경고"
+  event_pattern = jsonencode({
+    source      = ["aws.ec2"]
+    detail-type = ["EC2 Spot Instance Interruption Warning"]
+  })
+}
+
+resource "aws_cloudwatch_event_rule" "karpenter_rebalance" {
+  name          = "KarpenterRebalance-${var.cluster_name}"
+  description   = "Karpenter: EC2 인스턴스 리밸런싱 권고"
+  event_pattern = jsonencode({
+    source      = ["aws.ec2"]
+    detail-type = ["EC2 Instance Rebalance Recommendation"]
+  })
+}
+
+resource "aws_cloudwatch_event_rule" "karpenter_instance_state" {
+  name          = "KarpenterInstanceState-${var.cluster_name}"
+  description   = "Karpenter: EC2 인스턴스 상태 변경"
+  event_pattern = jsonencode({
+    source      = ["aws.ec2"]
+    detail-type = ["EC2 Instance State-change Notification"]
+  })
+}
+
+resource "aws_cloudwatch_event_rule" "karpenter_scheduled_change" {
+  name          = "KarpenterScheduledChange-${var.cluster_name}"
+  description   = "Karpenter: AWS Health 예약 이벤트"
+  event_pattern = jsonencode({
+    source      = ["aws.health"]
+    detail-type = ["AWS Health Event"]
+  })
+}
+
+resource "aws_cloudwatch_event_target" "karpenter_spot_interruption" {
+  rule = aws_cloudwatch_event_rule.karpenter_spot_interruption.name
+  arn  = aws_sqs_queue.karpenter_interruption.arn
+}
+
+resource "aws_cloudwatch_event_target" "karpenter_rebalance" {
+  rule = aws_cloudwatch_event_rule.karpenter_rebalance.name
+  arn  = aws_sqs_queue.karpenter_interruption.arn
+}
+
+resource "aws_cloudwatch_event_target" "karpenter_instance_state" {
+  rule = aws_cloudwatch_event_rule.karpenter_instance_state.name
+  arn  = aws_sqs_queue.karpenter_interruption.arn
+}
+
+resource "aws_cloudwatch_event_target" "karpenter_scheduled_change" {
+  rule = aws_cloudwatch_event_rule.karpenter_scheduled_change.name
+  arn  = aws_sqs_queue.karpenter_interruption.arn
 }

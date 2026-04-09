@@ -22,9 +22,9 @@ spec:
       priorityClassName: y2ks-high
       containers:
       - name: web
-        image: python:3.9-slim
-        command: ["/bin/sh", "-c"]
-        args: ["pip install flask boto3 redis gunicorn prometheus-flask-exporter requests && gunicorn --bind 0.0.0.0:5000 --workers 2 --chdir /app app:app"]
+        image: "{{ .Values.images.frontend }}"
+        command: ["gunicorn"]
+        args: ["--bind", "0.0.0.0:5000", "--workers", "2", "--chdir", "/app", "app:app"]
         ports:
         - containerPort: 5000
         readinessProbe:
@@ -49,6 +49,8 @@ spec:
             cpu: 500m
             memory: 512Mi
         env:
+        - name: TICKET_COUNT
+          value: "{{ .Values.ticketCount }}"
         - name: PROMETHEUS_URL
           value: "http://prometheus-server.monitoring.svc.cluster.local:80"
         - name: SQS_QUEUE_URL

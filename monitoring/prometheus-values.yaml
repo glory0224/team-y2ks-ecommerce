@@ -1,0 +1,61 @@
+# ============================================================
+# kube-prometheus-stack helm values
+# monitoring/amp.tf의 null_resource.prometheus_stack에서 사용
+# AMP remote_write + KEDA/Karpenter ServiceMonitor 포함
+# ============================================================
+
+prometheus:
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: "__AMP_ROLE_ARN__"   # terraform이 치환
+
+  prometheusSpec:
+    # AMP remote_write - IRSA로 SigV4 서명 (roleArn 불필요)
+    remoteWrite:
+      - url: "__AMP_ENDPOINT__api/v1/remote_write"     # terraform이 치환
+        sigv4:
+          region: ap-northeast-2
+        queueConfig:
+          capacity: 2500
+          maxSamplesPerSend: 1000
+          maxShards: 200
+
+    # 모든 네임스페이스의 ServiceMonitor를 수집
+    serviceMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelector: {}
+    serviceMonitorNamespaceSelector: {}
+
+  # ============================================================
+  # KEDA ServiceMonitor
+  # 실제 서비스 레이블: app.kubernetes.io/name: keda-operator
+  # 포트: metricsservice (9666)
+  # ============================================================
+  additionalServiceMonitors:
+    - name: keda-operator
+      selector:
+        matchLabels:
+          app.kubernetes.io/name: keda-operator
+      namespaceSelector:
+        matchNames:
+          - keda
+      endpoints:
+        - port: metricsservice
+          interval: 30s
+          path: /metrics
+
+    # ============================================================
+    # Karpenter ServiceMonitor
+    # 서비스 레이블: app.kubernetes.io/name: karpenter
+    # 포트: http-metrics (8080)
+    # ============================================================
+    - name: karpenter
+      selector:
+        matchLabels:
+          app.kubernetes.io/name: karpenter
+      namespaceSelector:
+        matchNames:
+          - karpenter
+      endpoints:
+        - port: http-metrics
+          interval: 30s
+          path: /metrics
