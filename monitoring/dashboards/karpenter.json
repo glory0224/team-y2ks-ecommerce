@@ -2,7 +2,7 @@
   "title": "Karpenter Node Autoscaling",
   "uid": "y2ks-karpenter",
   "schemaVersion": 38,
-  "version": 2,
+  "version": 1,
   "refresh": "30s",
   "time": { "from": "now-1h", "to": "now" },
   "panels": [
@@ -13,7 +13,7 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
       "targets": [
         {
-          "expr": "count(karpenter_nodes_allocatable) by (nodepool)",
+          "expr": "count(karpenter_nodes_allocatable{}) by (nodepool)",
           "legendFormat": "{{nodepool}}",
           "refId": "A"
         }
@@ -67,7 +67,7 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum(rate(karpenter_nodes_time_to_ready_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(karpenter_nodes_total_time_to_ready_seconds_bucket[5m])) by (le))",
           "legendFormat": "p99 launch time",
           "refId": "A"
         }
@@ -80,12 +80,12 @@
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
       "targets": [
         {
-          "expr": "rate(karpenter_nodes_created[5m])",
+          "expr": "rate(karpenter_nodes_created_total[5m])",
           "legendFormat": "Launched/s",
           "refId": "A"
         },
         {
-          "expr": "rate(karpenter_nodes_terminated[5m])",
+          "expr": "rate(karpenter_nodes_terminated_total[5m])",
           "legendFormat": "Terminated/s",
           "refId": "B"
         }
@@ -134,7 +134,7 @@
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 24 },
       "targets": [
         {
-          "expr": "rate(karpenter_disruption_decisions[5m])",
+          "expr": "rate(karpenter_disruption_decisions_total[5m])",
           "legendFormat": "{{decision}} - {{reason}}",
           "refId": "A"
         }
