@@ -12,6 +12,7 @@ karpenterNodeRoleName: ""
 # 앱 설정 — 필요 시 수정 가능
 # ============================================================
 queueName: "y2ks-queue"
+kinesisStreamName: "y2ks-traffic-stream"
 ddbTable: "y2ks-coupon-claims"
 senderEmail: "wooseoyun@naver.com"
 ticketCount: 100
@@ -23,4 +24,4 @@ images:
 worker:
   minReplicas: 1
   maxReplicas: 50
-  queueLength: "5"
+  shardCount: "1"

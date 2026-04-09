@@ -1,0 +1,42 @@
+---
+# KEDA Operator ServiceMonitor
+# KEDA 2.12+ : metricsservice(9666) deprecated → metrics(8080) 통합
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: keda-operator
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: keda-operator
+  namespaceSelector:
+    matchNames:
+      - keda
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+---
+# Karpenter ServiceMonitor
+# port: http-metrics (8080) - Karpenter 노드 프로비저닝 메트릭
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: karpenter
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: karpenter
+  namespaceSelector:
+    matchNames:
+      - karpenter
+  endpoints:
+    - port: http-metrics
+      interval: 30s
+      path: /metrics

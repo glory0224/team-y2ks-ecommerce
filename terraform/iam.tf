@@ -111,9 +111,9 @@ resource "aws_iam_role" "keda_operator" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "keda_sqs" {
+resource "aws_iam_role_policy_attachment" "keda_kinesis" {
   role       = aws_iam_role.keda_operator.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSQSReadOnlyAccess"
+  policy_arn = "arn:aws:iam::aws:policy/AmazonKinesisReadOnlyAccess"
 }
 
 # ============================================================

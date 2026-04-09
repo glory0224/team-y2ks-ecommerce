@@ -2,17 +2,20 @@
   "title": "KEDA ScaledObjects",
   "uid": "y2ks-keda",
   "schemaVersion": 38,
-  "version": 1,
+  "version": 2,
   "refresh": "30s",
   "time": { "from": "now-1h", "to": "now" },
+  "templating": { "list": [] },
   "panels": [
     {
       "id": 1,
       "title": "ScaledObject - Current Replicas",
       "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
       "targets": [
         {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
           "expr": "keda_scaler_metrics_value",
           "legendFormat": "{{scaler}} / {{scaledObject}}",
           "refId": "A"
@@ -23,10 +26,12 @@
       "id": 2,
       "title": "ScaledObject - Active",
       "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
       "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
       "targets": [
         {
-          "expr": "keda_scaled_object_paused",
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "keda_scaler_active",
           "legendFormat": "{{scaledObject}}",
           "refId": "A"
         }
@@ -38,13 +43,15 @@
     },
     {
       "id": 3,
-      "title": "SQS Queue Length (y2ks-queue)",
+      "title": "Kinesis Stream Shard Depth (y2ks-traffic-stream)",
       "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
       "targets": [
         {
-          "expr": "keda_scaler_metrics_value{scaler=\"awsSqsQueue\"}",
-          "legendFormat": "Queue Depth",
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "keda_scaler_metrics_value{scaler=\"awsKinesisStreamScaler\"}",
+          "legendFormat": "Shard Depth",
           "refId": "A"
         }
       ]
@@ -53,14 +60,17 @@
       "id": 4,
       "title": "Worker Replicas",
       "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
       "targets": [
         {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
           "expr": "kube_deployment_status_replicas{deployment=\"y2ks-worker\"}",
           "legendFormat": "Current",
           "refId": "A"
         },
         {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
           "expr": "kube_deployment_spec_replicas{deployment=\"y2ks-worker\"}",
           "legendFormat": "Desired",
           "refId": "B"
@@ -71,10 +81,12 @@
       "id": 5,
       "title": "KEDA Operator - Errors",
       "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
       "gridPos": { "h": 6, "w": 12, "x": 0, "y": 16 },
       "targets": [
         {
-          "expr": "rate(keda_scaler_errors_total[5m])",
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "rate(keda_scaler_detail_errors_total[5m])",
           "legendFormat": "{{scaledObject}} errors/s",
           "refId": "A"
         }
@@ -84,11 +96,13 @@
       "id": 6,
       "title": "KEDA - ScaledObject Reconcile Duration",
       "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
       "gridPos": { "h": 6, "w": 12, "x": 12, "y": 16 },
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, rate(keda_internal_scale_loop_latency_bucket[5m]))",
-          "legendFormat": "p99 latency",
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "keda_internal_scale_loop_latency_seconds",
+          "legendFormat": "latency",
           "refId": "A"
         }
       ]

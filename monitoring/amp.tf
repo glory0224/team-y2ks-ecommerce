@@ -90,6 +90,10 @@ resource "null_resource" "prometheus_stack" {
 
       Remove-Item $tmpFile
 
+      # KEDA/Karpenter ServiceMonitor 적용 (helm/y2ks chart와 독립적으로 보장)
+      aws eks update-kubeconfig --name ${var.cluster_name} --region ${var.aws_region}
+      kubectl apply -f "${path.module}/../helm/y2ks/templates/servicemonitors.yaml"
+
       Write-Host "kube-prometheus-stack 설치 완료"
     EOT
   }
