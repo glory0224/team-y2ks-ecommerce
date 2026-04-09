@@ -155,3 +155,22 @@ resource "null_resource" "amg_datasource" {
     null_resource.prometheus_stack
   ]
 }
+
+# ============================================================
+# AMG user permissions - auto grant ADMIN to all SSO users
+# ============================================================
+data "aws_ssoadmin_instances" "main" {}
+
+data "aws_identitystore_users" "all" {
+  identity_store_id = tolist(data.aws_ssoadmin_instances.main.identity_store_ids)[0]
+}
+
+resource "aws_grafana_role_association" "admins" {
+  for_each = {
+    for u in data.aws_identitystore_users.all.users : u.user_id => u
+  }
+
+  workspace_id = aws_grafana_workspace.main.id
+  role         = "ADMIN"
+  user_ids     = [each.value.user_id]
+}

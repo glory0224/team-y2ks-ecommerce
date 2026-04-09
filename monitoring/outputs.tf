@@ -20,17 +20,14 @@ output "amg_endpoint" {
 
 output "next_steps" {
   description = "적용 후 안내"
-  value = <<-EOT
+  value       = <<-EOT
     [완료]
     - AMP workspace: ${aws_prometheus_workspace.main.id}
     - AMG Grafana URL: https://${aws_grafana_workspace.main.endpoint}
 
     [AMG 사용자 접근 권한 부여]
-    IAM Identity Center 콘솔에서 사용자를 AMG workspace에 할당하거나:
-    aws grafana update-permissions \
-      --workspace-id ${aws_grafana_workspace.main.id} \
-      --update-instruction-batch '[{"action":"ADD","role":"ADMIN","users":[{"id":"<SSO_USER_ID>","type":"SSO_USER"}]}]' \
-      --region ${var.aws_region}
+    terraform apply 시 IAM Identity Center 전체 유저를 자동 조회하여 AMG ADMIN 권한을 부여합니다.
+    별도 설정 없이 apply 만 하면 됩니다.
 
     [Prometheus remote_write 확인]
     kubectl get prometheus -n monitoring prometheus-kube-prometheus-prometheus -o jsonpath='{.spec.remoteWrite}'

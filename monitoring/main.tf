@@ -23,7 +23,16 @@ provider "aws" {
 
 data "aws_caller_identity" "current" {}
 
+data "terraform_remote_state" "infra" {
+  backend = "s3"
+  config = {
+    bucket = "y2ks-terraform-state-951913065915"
+    key    = "terraform.tfstate"
+    region = var.aws_region
+  }
+}
+
 locals {
-  account_id   = data.aws_caller_identity.current.account_id
-  oidc_issuer  = "oidc.eks.${var.aws_region}.amazonaws.com/id/B738049685299428326A25475F753266"
+  account_id  = data.aws_caller_identity.current.account_id
+  oidc_issuer = data.terraform_remote_state.infra.outputs.oidc_issuer
 }
