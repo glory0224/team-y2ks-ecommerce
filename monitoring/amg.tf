@@ -2,6 +2,33 @@
 # Amazon Managed Grafana (AMG) workspace
 # IAM Identity Center(SSO) 인증 사용
 # ============================================================
+
+# destroy 후 재생성 시 AWS가 workspace를 완전히 삭제할 때까지 대기
+# (같은 이름으로 바로 생성하면 409 ConflictException 발생)
+resource "null_resource" "wait_amg_deleted" {
+  triggers = {
+    workspace_name = var.amg_workspace_name
+    region         = var.aws_region
+  }
+
+  provisioner "local-exec" {
+    interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
+    command     = <<-EOT
+      $name   = "${var.amg_workspace_name}"
+      $region = "${var.aws_region}"
+      $max    = 30
+      for ($i = 0; $i -lt $max; $i++) {
+        $existing = aws grafana list-workspaces --region $region --output json |
+          ConvertFrom-Json | Select-Object -ExpandProperty workspaces |
+          Where-Object { $_.name -eq $name -and $_.status -ne "DELETING" }
+        if (-not $existing) { Write-Host "workspace cleared"; break }
+        Write-Host "waiting for workspace deletion... ($($i*10)s)"
+        Start-Sleep -Seconds 10
+      }
+    EOT
+  }
+}
+
 resource "aws_grafana_workspace" "main" {
   name                     = var.amg_workspace_name
   account_access_type      = "CURRENT_ACCOUNT"
@@ -14,6 +41,8 @@ resource "aws_grafana_workspace" "main" {
   tags = {
     Project = "y2ks"
   }
+
+  depends_on = [null_resource.wait_amg_deleted]
 }
 
 # ============================================================
