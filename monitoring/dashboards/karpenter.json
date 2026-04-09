@@ -2,17 +2,20 @@
   "title": "Karpenter Node Autoscaling",
   "uid": "y2ks-karpenter",
   "schemaVersion": 38,
-  "version": 1,
+  "version": 3,
   "refresh": "30s",
   "time": { "from": "now-1h", "to": "now" },
+  "templating": { "list": [] },
   "panels": [
     {
       "id": 1,
-      "title": "Nodes by Provisioner",
+      "title": "Nodes by NodePool",
       "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
       "targets": [
         {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
           "expr": "count(karpenter_nodes_allocatable{}) by (nodepool)",
           "legendFormat": "{{nodepool}}",
           "refId": "A"
@@ -23,10 +26,12 @@
       "id": 2,
       "title": "Total Cluster Nodes",
       "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
       "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
       "targets": [
         {
-          "expr": "count(kube_node_info)",
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "count(kube_node_info{})",
           "legendFormat": "Nodes",
           "refId": "A"
         }
@@ -40,10 +45,12 @@
       "id": 3,
       "title": "Pending Pods",
       "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
       "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
       "targets": [
         {
-          "expr": "count(kube_pod_status_phase{phase=\"Pending\"}) or vector(0)",
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "sum(kube_pod_status_phase{phase=\"Pending\"}) or vector(0)",
           "legendFormat": "Pending",
           "refId": "A"
         }
@@ -64,10 +71,12 @@
       "id": 4,
       "title": "Karpenter - Node Launch Duration (p99)",
       "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum(rate(karpenter_nodes_total_time_to_ready_seconds_bucket[5m])) by (le))",
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "histogram_quantile(0.99, sum(rate(karpenter_nodeclaims_total_time_to_ready_seconds_bucket[5m])) by (le))",
           "legendFormat": "p99 launch time",
           "refId": "A"
         }
@@ -75,17 +84,20 @@
     },
     {
       "id": 5,
-      "title": "Karpenter - Nodes Launched / Terminated",
+      "title": "Karpenter - NodeClaims Launched / Terminated",
       "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
       "targets": [
         {
-          "expr": "rate(karpenter_nodes_created_total[5m])",
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "rate(karpenter_nodeclaims_created_total[5m])",
           "legendFormat": "Launched/s",
           "refId": "A"
         },
         {
-          "expr": "rate(karpenter_nodes_terminated_total[5m])",
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "rate(karpenter_nodeclaims_terminated_total[5m])",
           "legendFormat": "Terminated/s",
           "refId": "B"
         }
@@ -95,14 +107,17 @@
       "id": 6,
       "title": "Node CPU Allocatable vs Requested",
       "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
       "targets": [
         {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
           "expr": "sum(kube_node_status_allocatable{resource=\"cpu\"}) by (node)",
           "legendFormat": "Allocatable {{node}}",
           "refId": "A"
         },
         {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
           "expr": "sum(kube_pod_container_resource_requests{resource=\"cpu\"}) by (node)",
           "legendFormat": "Requested {{node}}",
           "refId": "B"
@@ -113,14 +128,17 @@
       "id": 7,
       "title": "Node Memory Allocatable vs Requested",
       "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
       "targets": [
         {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
           "expr": "sum(kube_node_status_allocatable{resource=\"memory\"}) by (node)",
           "legendFormat": "Allocatable {{node}}",
           "refId": "A"
         },
         {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
           "expr": "sum(kube_pod_container_resource_requests{resource=\"memory\"}) by (node)",
           "legendFormat": "Requested {{node}}",
           "refId": "B"
@@ -131,10 +149,12 @@
       "id": 8,
       "title": "Karpenter - Disruption Decisions",
       "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 24 },
       "targets": [
         {
-          "expr": "rate(karpenter_disruption_decisions_total[5m])",
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "rate(karpenter_voluntary_disruption_decisions_total[5m])",
           "legendFormat": "{{decision}} - {{reason}}",
           "refId": "A"
         }

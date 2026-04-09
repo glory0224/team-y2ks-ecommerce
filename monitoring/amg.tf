@@ -9,7 +9,7 @@ resource "aws_grafana_workspace" "main" {
   permission_type          = "SERVICE_MANAGED"
   role_arn                 = aws_iam_role.amg.arn
 
-  data_sources = ["PROMETHEUS"]
+  data_sources = ["PROMETHEUS", "CLOUDWATCH"]
 
   tags = {
     Project = "y2ks"
@@ -17,7 +17,7 @@ resource "aws_grafana_workspace" "main" {
 }
 
 # ============================================================
-# AMG IAM Role - AMP 쿼리 권한
+# AMG IAM Role
 # ============================================================
 resource "aws_iam_role" "amg" {
   name = "Y2ksAMGRole"
@@ -42,6 +42,7 @@ resource "aws_iam_role" "amg" {
   })
 }
 
+# AMP 쿼리 권한
 resource "aws_iam_role_policy" "amg_amp_query" {
   name = "AMGAMPQueryPolicy"
   role = aws_iam_role.amg.id
@@ -70,27 +71,31 @@ resource "aws_iam_role_policy" "amg_amp_query" {
   })
 }
 
+# CloudWatch 읽기 권한
+resource "aws_iam_role_policy_attachment" "amg_cloudwatch" {
+  role       = aws_iam_role.amg.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchReadOnlyAccess"
+}
+
 # ============================================================
-# AMG에 AMP datasource 연결
-# - upsert 방식: 이미 존재하면 PUT으로 업데이트, 없으면 POST로 생성
-# - destroy 시 삭제
+# AMG에 AMP datasource 연결 (upsert)
 # ============================================================
 resource "null_resource" "amg_datasource" {
   triggers = {
-    workspace_id = aws_grafana_workspace.main.id
-    amp_endpoint = aws_prometheus_workspace.main.prometheus_endpoint
-    region       = var.aws_region
+    workspace_id    = aws_grafana_workspace.main.id
+    amp_endpoint    = aws_prometheus_workspace.main.prometheus_endpoint
+    region          = var.aws_region
+    iam_policy_hash = sha256(aws_iam_role_policy.amg_amp_query.policy)
   }
 
   provisioner "local-exec" {
     interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
     command     = <<-EOT
       $workspaceId = "${aws_grafana_workspace.main.id}"
-      $region = "${var.aws_region}"
-      $grafanaUrl = "https://$workspaceId.grafana-workspace.$region.amazonaws.com"
-      $ampUrl = "${aws_prometheus_workspace.main.prometheus_endpoint}".TrimEnd('/')
+      $region      = "${var.aws_region}"
+      $ampUrl      = "${trimsuffix(aws_prometheus_workspace.main.prometheus_endpoint, "/")}"
+      $grafanaUrl  = "https://$workspaceId.grafana-workspace.$region.amazonaws.com"
 
-      # API key - 타임스탬프로 충돌 방지
       $keyName = "tf-ds-$(Get-Date -Format 'yyyyMMddHHmmss')"
       $apiKey = (aws grafana create-workspace-api-key `
         --key-name $keyName --key-role "ADMIN" --seconds-to-live 300 `
@@ -100,6 +105,7 @@ resource "null_resource" "amg_datasource" {
 
       $body = @{
         name      = "AMP-y2ks"
+        uid       = "AMP-y2ks"
         type      = "prometheus"
         url       = $ampUrl
         access    = "proxy"
@@ -112,7 +118,6 @@ resource "null_resource" "amg_datasource" {
         }
       } | ConvertTo-Json -Depth 5
 
-      # 기존 datasource 조회 → 있으면 PUT, 없으면 POST (upsert)
       try {
         $existing = Invoke-RestMethod -Uri "$grafanaUrl/api/datasources/name/AMP-y2ks" -Headers $headers -ErrorAction Stop
         Invoke-RestMethod -Uri "$grafanaUrl/api/datasources/$($existing.id)" -Method PUT -Headers $headers -Body $body | Out-Null
@@ -129,8 +134,8 @@ resource "null_resource" "amg_datasource" {
     interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
     command     = <<-EOT
       $workspaceId = "${self.triggers.workspace_id}"
-      $region = "${self.triggers.region}"
-      $grafanaUrl = "https://$workspaceId.grafana-workspace.$region.amazonaws.com"
+      $region      = "${self.triggers.region}"
+      $grafanaUrl  = "https://$workspaceId.grafana-workspace.$region.amazonaws.com"
 
       $keyName = "tf-destroy-$(Get-Date -Format 'yyyyMMddHHmmss')"
       $apiKey = (aws grafana create-workspace-api-key `
@@ -152,12 +157,16 @@ resource "null_resource" "amg_datasource" {
   depends_on = [
     aws_grafana_workspace.main,
     aws_prometheus_workspace.main,
+    aws_iam_role_policy.amg_amp_query,
     null_resource.prometheus_stack
   ]
 }
 
 # ============================================================
-# AMG user permissions - auto grant ADMIN to all SSO users
+# AMG user permissions - SSO 사용자 전원 ADMIN
+# aws_grafana_role_association은 SERVICE_MANAGED workspace에서
+# destroy 시 404 에러가 발생하므로 null_resource + AWS CLI로 처리
+# workspace 삭제 시 권한도 함께 삭제되므로 destroy provisioner 불필요
 # ============================================================
 data "aws_ssoadmin_instances" "main" {}
 
@@ -165,12 +174,38 @@ data "aws_identitystore_users" "all" {
   identity_store_id = tolist(data.aws_ssoadmin_instances.main.identity_store_ids)[0]
 }
 
-resource "aws_grafana_role_association" "admins" {
-  for_each = {
-    for u in data.aws_identitystore_users.all.users : u.user_id => u
+resource "null_resource" "amg_user_permissions" {
+  triggers = {
+    workspace_id = aws_grafana_workspace.main.id
+    user_ids     = join(",", [for u in data.aws_identitystore_users.all.users : u.user_id])
   }
 
-  workspace_id = aws_grafana_workspace.main.id
-  role         = "ADMIN"
-  user_ids     = [each.value.user_id]
+  provisioner "local-exec" {
+    interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
+    command     = <<-EOT
+      $workspaceId = "${aws_grafana_workspace.main.id}"
+      $region      = "${var.aws_region}"
+      $userIds     = "${join(",", [for u in data.aws_identitystore_users.all.users : u.user_id])}".Split(",")
+
+      foreach ($userId in $userIds) {
+        $tmpFile = [System.IO.Path]::GetTempFileName() + ".json"
+        $batch = "[{`"action`":`"ADD`",`"role`":`"ADMIN`",`"users`":[{`"id`":`"$userId`",`"type`":`"SSO_USER`"}]}]"
+        [System.IO.File]::WriteAllText($tmpFile, $batch, [System.Text.Encoding]::ASCII)
+        aws grafana update-permissions `
+          --workspace-id $workspaceId `
+          --update-instruction-batch "file://$tmpFile" `
+          --region $region | Out-Null
+        Remove-Item $tmpFile
+        Write-Host "권한 부여 완료: $userId"
+      }
+    EOT
+  }
+
+  provisioner "local-exec" {
+    when        = destroy
+    interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
+    command     = "Write-Host 'workspace 삭제 시 권한도 함께 삭제됨'"
+  }
+
+  depends_on = [aws_grafana_workspace.main]
 }

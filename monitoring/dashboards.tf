@@ -17,8 +17,8 @@ resource "null_resource" "amg_dashboards" {
     interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
     command     = <<-EOT
       $workspaceId = "${aws_grafana_workspace.main.id}"
-      $region = "${var.aws_region}"
-      $grafanaUrl = "https://$workspaceId.grafana-workspace.$region.amazonaws.com"
+      $region      = "${var.aws_region}"
+      $grafanaUrl  = "https://$workspaceId.grafana-workspace.$region.amazonaws.com"
 
       $keyName = "tf-dash-$(Get-Date -Format 'yyyyMMddHHmmss')"
       $apiKey = (aws grafana create-workspace-api-key `
@@ -27,7 +27,7 @@ resource "null_resource" "amg_dashboards" {
         --output json | ConvertFrom-Json).key
       $headers = @{ "Authorization" = "Bearer $apiKey"; "Content-Type" = "application/json" }
 
-      # 폴더 upsert: uid로 조회 후 없으면 생성, 있으면 그대로 사용
+      # 폴더 upsert
       $folderUid = "y2ks-monitoring"
       $folder = $null
       try {
@@ -39,7 +39,6 @@ resource "null_resource" "amg_dashboards" {
           $folder = Invoke-RestMethod -Uri "$grafanaUrl/api/folders" -Method POST -Headers $headers `
             -Body (@{ uid = $folderUid; title = "Y2KS Monitoring" } | ConvertTo-Json)
         } catch {
-          # 동시 생성 경쟁 등으로 실패 시 다시 조회
           $folder = Invoke-RestMethod -Uri "$grafanaUrl/api/folders/$folderUid" -Headers $headers
         }
       }
@@ -60,8 +59,8 @@ resource "null_resource" "amg_dashboards" {
     interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
     command     = <<-EOT
       $workspaceId = "${self.triggers.workspace_id}"
-      $region = "${self.triggers.region}"
-      $grafanaUrl = "https://$workspaceId.grafana-workspace.$region.amazonaws.com"
+      $region      = "${self.triggers.region}"
+      $grafanaUrl  = "https://$workspaceId.grafana-workspace.$region.amazonaws.com"
 
       $keyName = "tf-destroy-$(Get-Date -Format 'yyyyMMddHHmmss')"
       $apiKey = (aws grafana create-workspace-api-key `
@@ -70,7 +69,6 @@ resource "null_resource" "amg_dashboards" {
         --output json | ConvertFrom-Json).key
       $headers = @{ "Authorization" = "Bearer $apiKey"; "Content-Type" = "application/json" }
 
-      # 폴더 삭제 (하위 대시보드 포함)
       try {
         Invoke-RestMethod -Uri "$grafanaUrl/api/folders/y2ks-monitoring" -Method DELETE -Headers $headers | Out-Null
         Write-Host "Y2KS Monitoring 폴더 삭제 완료"
