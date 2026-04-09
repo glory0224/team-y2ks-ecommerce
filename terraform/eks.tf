@@ -59,6 +59,13 @@ resource "aws_iam_openid_connect_provider" "eks" {
 # OIDC URL (https:// 제거한 버전 - IAM 조건문에 사용)
 locals {
   oidc_issuer = replace(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://", "")
+
+  # 현재 실행 중인 IAM 유저의 이름 추출 (예: user02)
+  # ARN이 'arn:aws:iam::123456789012:user/user02' 형식일 때 마지막 부분을 가져옴
+  current_session_user = element(split("/", data.aws_caller_identity.current.arn), length(split("/", data.aws_caller_identity.current.arn)) - 1)
+  
+  # 팀원 목록에서 현재 실행 중인 유저를 제외 (중복 방지)
+  filtered_team_members = toset([for u in var.team_member_usernames : u if u != local.current_session_user])
 }
 
 # ============================================================
@@ -219,7 +226,7 @@ resource "aws_eks_access_policy_association" "terraform_runner_admin" {
 # terraform apply만으로 kubectl 권한 자동 부여
 # ============================================================
 resource "aws_eks_access_entry" "team" {
-  for_each = toset(var.team_member_usernames)
+  for_each = local.filtered_team_members
 
   cluster_name  = aws_eks_cluster.main.name
   principal_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/${each.value}"
@@ -227,7 +234,7 @@ resource "aws_eks_access_entry" "team" {
 }
 
 resource "aws_eks_access_policy_association" "team_admin" {
-  for_each = toset(var.team_member_usernames)
+  for_each = local.filtered_team_members
 
   cluster_name  = aws_eks_cluster.main.name
   principal_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/${each.value}"
