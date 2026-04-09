@@ -54,8 +54,13 @@ output "next_steps" {
   description = "terraform apply 완료 후 실행 순서"
   value = <<-EOT
     [terraform apply 한 번으로 자동 완료]
-    - VPC / EKS / IAM / DynamoDB 생성
-    - KEDA, Karpenter Helm 설치
+    - VPC / EKS / IAM 생성
+    - DynamoDB 테이블 생성 (y2ks-coupon-claims)
+    - SQS 큐 생성 (y2ks-queue)
+    - ECR 리포지토리 생성 + Docker 이미지 빌드 & 푸시
+    - Prometheus Helm 설치 (monitoring 네임스페이스)
+    - KEDA Helm 설치
+    - Karpenter Helm 설치
     - worker-sa 생성 + IRSA 어노테이션
     - Y2KS 앱 전체 배포 (Helm)
     - 계정 ID는 aws configure에서 자동으로 읽어옴
@@ -68,7 +73,14 @@ output "next_steps" {
     3. 접속 URL 확인:
        kubectl get svc y2ks-frontend-svc
 
+    [쿠폰 수량 변경]
+    helm/y2ks/values.yaml 의 ticketCount 수정 후 terraform apply
+
     [코드 수정 후 재배포]
     terraform apply
+
+    [전체 삭제]
+    terraform destroy
+    (Karpenter 노드 → LoadBalancer → ELB → ENI 순서로 자동 정리됨)
   EOT
 }

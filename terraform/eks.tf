@@ -59,6 +59,13 @@ resource "aws_iam_openid_connect_provider" "eks" {
 # OIDC URL (https:// 제거한 버전 - IAM 조건문에 사용)
 locals {
   oidc_issuer = replace(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://", "")
+
+  # 현재 실행 중인 IAM 유저의 이름 추출 (예: user02)
+  # ARN이 'arn:aws:iam::123456789012:user/user02' 형식일 때 마지막 부분을 가져옴
+  current_session_user = element(split("/", data.aws_caller_identity.current.arn), length(split("/", data.aws_caller_identity.current.arn)) - 1)
+  
+  # 팀원 목록에서 현재 실행 중인 유저를 제외 (중복 방지)
+  filtered_team_members = toset([for u in var.team_member_usernames : u if u != local.current_session_user])
 }
 
 # ============================================================
@@ -112,10 +119,13 @@ resource "aws_eks_node_group" "standard" {
     "alpha.eksctl.io/cluster-name" = var.cluster_name
   }
 
+  # destroy 순서 보장: 노드그룹(ASG)이 IGW보다 먼저 삭제되어야
+  # EC2 인스턴스 → ENI가 해제된 후 IGW 삭제 가능
   depends_on = [
     aws_iam_role_policy_attachment.node_worker,
     aws_iam_role_policy_attachment.node_cni,
     aws_iam_role_policy_attachment.node_ecr,
+    aws_internet_gateway.main,
   ]
 }
 
@@ -141,10 +151,13 @@ resource "aws_eks_node_group" "app" {
     "karpenter.sh/discovery"       = var.cluster_name
   }
 
+  # destroy 순서 보장: 노드그룹(ASG)이 IGW보다 먼저 삭제되어야
+  # EC2 인스턴스 → ENI가 해제된 후 IGW 삭제 가능
   depends_on = [
     aws_iam_role_policy_attachment.node_worker,
     aws_iam_role_policy_attachment.node_cni,
     aws_iam_role_policy_attachment.node_ecr,
+    aws_internet_gateway.main,
   ]
 }
 
@@ -213,7 +226,7 @@ resource "aws_eks_access_policy_association" "terraform_runner_admin" {
 # terraform apply만으로 kubectl 권한 자동 부여
 # ============================================================
 resource "aws_eks_access_entry" "team" {
-  for_each = toset(var.team_member_usernames)
+  for_each = local.filtered_team_members
 
   cluster_name  = aws_eks_cluster.main.name
   principal_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/${each.value}"
@@ -221,7 +234,7 @@ resource "aws_eks_access_entry" "team" {
 }
 
 resource "aws_eks_access_policy_association" "team_admin" {
-  for_each = toset(var.team_member_usernames)
+  for_each = local.filtered_team_members
 
   cluster_name  = aws_eks_cluster.main.name
   principal_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/${each.value}"
@@ -232,4 +245,16 @@ resource "aws_eks_access_policy_association" "team_admin" {
   }
 
   depends_on = [aws_eks_access_entry.team]
+}
+
+# ============================================================
+# Karpenter 노드 EKS 접근 등록
+# 없으면 Karpenter가 프로비저닝한 노드가 클러스터에 조인 불가
+# ============================================================
+resource "aws_eks_access_entry" "karpenter_node" {
+  cluster_name  = aws_eks_cluster.main.name
+  principal_arn = aws_iam_role.karpenter_node.arn
+  type          = "EC2_LINUX"
+
+  depends_on = [aws_eks_cluster.main]
 }
