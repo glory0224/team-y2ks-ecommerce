@@ -5,8 +5,8 @@
 # ============================================================
 resource "null_resource" "amg_dashboards" {
   triggers = {
-    workspace_id   = aws_grafana_workspace.main.id
-    region         = var.aws_region
+    workspace_id = aws_grafana_workspace.main.id
+    region       = var.aws_region
     dashboard_hash = sha256(join("", [
       file("${path.module}/dashboards/keda.json"),
       file("${path.module}/dashboards/karpenter.json"),

@@ -5,7 +5,7 @@ metadata:
   labels:
     app: frontend
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: frontend
@@ -43,7 +43,7 @@ spec:
           failureThreshold: 3
         resources:
           requests:
-            cpu: 100m
+            cpu: 200m
             memory: 200Mi
           limits:
             cpu: 500m
