@@ -13,7 +13,7 @@ karpenterNodeRoleName: ""
 # ============================================================
 queueName: "y2ks-queue"
 ddbTable: "y2ks-coupon-claims"
-senderEmail: "wooseoyun@naver.com"
+senderEmail: "tjzns20@gmail.com"
 
 worker:
   minReplicas: 1

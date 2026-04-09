@@ -11,13 +11,6 @@ terraform {
     }
   }
 
-  backend "s3" {
-    bucket         = "y2ks-terraform-state-951913065915"
-    key            = "terraform.tfstate"
-    region         = "ap-northeast-2"
-    dynamodb_table = "y2ks-terraform-lock"
-    encrypt        = true
-  }
 }
 
 provider "aws" {
