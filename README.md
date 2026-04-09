@@ -249,9 +249,10 @@ terraform destroy
 
 ---
 
+
 ## 모니터링 (AWS Managed Grafana)
 
-KEDA와 Karpenter의 스케일링 동작을 Amazon Managed Prometheus(AMP) + Amazon Managed Grafana(AMG)로 시각화합니다.  
+KEDA와 Karpenter의 스케일링 동작을 AMP + AMG로 시각화합니다.  
 기존 `terraform/` 과 완전히 분리된 독립 state로 관리됩니다.
 
 ### 아키텍처
@@ -260,159 +261,84 @@ KEDA와 Karpenter의 스케일링 동작을 Amazon Managed Prometheus(AMP) + Ama
 [EKS 클러스터]
   └── monitoring 네임스페이스
         └── prometheus (kube-prometheus-stack)
-              │  scrape
-              ├── keda-operator (port 9666)        ← KEDA 메트릭
-              ├── karpenter (port 8080)             ← Karpenter 메트릭
-              └── kube-state-metrics, node-exporter 등
-              │
+              │  scrape: keda-operator, karpenter, kube-state-metrics, node-exporter
               │  remote_write (SigV4 / IRSA)
               ▼
         [AMP - Amazon Managed Prometheus]
-              │
               │  query (SigV4 / workspace IAM role)
               ▼
         [AMG - Amazon Managed Grafana]
               │  IAM Identity Center(SSO) 로그인
-              └── Y2KS Monitoring 폴더
-                    ├── KEDA ScaledObjects 대시보드
-                    └── Karpenter Node Autoscaling 대시보드
-```
-
-### 파일 구조
-
-```
-monitoring/
-├── main.tf                   # provider, S3 backend (monitoring/terraform.tfstate)
-├── variables.tf              # region, cluster_name, workspace 이름 등
-├── amp.tf                    # AMP workspace + IRSA + kube-prometheus-stack 설치
-├── amg.tf                    # AMG workspace + IAM role + datasource 연결
-├── dashboards.tf             # KEDA / Karpenter 대시보드 프로비저닝
-├── outputs.tf                # AMG URL, AMP endpoint 출력
-├── prometheus-values.yaml    # kube-prometheus-stack helm values
-│                             #   - AMP remote_write 설정
-│                             #   - KEDA / Karpenter ServiceMonitor 정의
-└── dashboards/
-      ├── keda.json           # KEDA ScaledObjects 대시보드
-      └── karpenter.json      # Karpenter Node Autoscaling 대시보드
+              └── KEDA / Karpenter 대시보드
 ```
 
 ### 배포
 
 ```bash
 cd monitoring
-terraform init
+terraform init   # 처음 한 번만
 terraform apply
 ```
 
 `terraform apply` 한 번으로 아래가 모두 자동 실행됩니다:
 
 - AMP workspace 생성
-- AMG workspace 생성 (IAM Identity Center 인증)
+- AMG workspace 생성 (IAM Identity Center SSO 인증)
 - kube-prometheus-stack 설치 (AMP remote_write + KEDA/Karpenter ServiceMonitor 포함)
-- AMG에 AMP datasource 연결
+- AMG에 AMP datasource 자동 연결
 - KEDA / Karpenter 대시보드 프로비저닝
+- IAM Identity Center에 등록된 전체 사용자에게 AMG ADMIN 권한 자동 부여
 
-### IAM Identity Center 사용자 생성 및 AMG 접근 설정
+### IAM Identity Center 사용자 생성
 
-모니터링 배포 후 Grafana에 로그인하려면 IAM Identity Center 사용자가 필요합니다.
+Grafana 로그인에 필요합니다. 사용자 추가 후 `terraform apply` 재실행 시 AMG 권한이 자동 부여됩니다.
 
-**1. 사용자 생성**
+AWS 콘솔 → IAM Identity Center → Users → "Add user" → Username / Email / 이름 입력  
+→ 이메일로 임시 비밀번호 전송됨
 
-AWS 콘솔 → IAM Identity Center → Users → "Add user"
+### Grafana 접속
 
-- Username, Email, First/Last name 입력
-- 생성 후 이메일로 임시 비밀번호 전송됨
+AMG는 IAM Identity Center SSO 세션 기반이므로 **포털 로그인 후 AMG URL로 이동**해야 합니다.  
+AMG URL로 직접 접근하면 세션이 없어 오류가 발생합니다.
 
-**2. MFA 설정 (선택)**
-
-AWS 콘솔 → IAM Identity Center → Users → 해당 유저 → "MFA devices" → "Register MFA device"
-
-- Authenticator app (Google Authenticator, Authy 등) 선택
-- QR 코드 스캔 후 등록
-
-**3. AMG workspace에 권한 부여**
-
-IAM Identity Center 콘솔에서 User ID 복사 후 실행:
-
-```bash
-aws grafana update-permissions \
-  --workspace-id <AMG_WORKSPACE_ID> \
-  --update-instruction-batch '[{"action":"ADD","role":"ADMIN","users":[{"id":"<SSO_USER_ID>","type":"SSO_USER"}]}]' \
-  --region ap-northeast-2
-```
-
-> `AMG_WORKSPACE_ID`와 `SSO_USER_ID`는 `terraform output` 또는 각 콘솔에서 확인합니다.
-
-**4. Grafana 접속**
-
-AMG는 IAM Identity Center SSO 세션 기반으로 동작하기 때문에 **반드시 아래 순서를 지켜야 합니다.**
-
-```
-❌ AMG URL 직접 접근 → SSO 세션 없음 → "문제가 발생했습니다" 오류
-✅ IAM Identity Center 포털 로그인 → SSO 세션 생성 → AMG URL 접근 → 성공
-```
-
-**접속 순서:**
-
-1. IAM Identity Center 포털 URL로 먼저 로그인
-
+1. IAM Identity Center 포털 로그인  
    AWS 콘솔 → IAM Identity Center → Dashboard → "AWS access portal URL" 확인  
-   (형식: `https://d-xxxxxxxxxx.awsapps.com/start`)
+   (`https://d-xxxxxxxxxx.awsapps.com/start`)
 
-2. 포털에서 이메일/임시 비밀번호로 로그인 → 비밀번호 변경 → MFA 등록
+2. 이메일 / 임시 비밀번호로 로그인 → 비밀번호 변경
 
-3. 로그인 완료 후 아래 AMG URL로 이동
+3. 포털 로그인 완료 후 아래 URL로 이동
 
 ```bash
-cd monitoring
-terraform output amg_endpoint
-# https://<workspace-id>.grafana-workspace.ap-northeast-2.amazonaws.com
+cd monitoring && terraform output amg_endpoint
 ```
 
-> terraform output URL로 직접 접근하면 SSO 세션이 없어 인증 오류가 발생합니다.  
-> IAM Identity Center 포털에서 먼저 세션을 만든 뒤 AMG URL로 이동해야 합니다.  
-> 이미 포털 로그인이 된 상태라면 AMG URL 직접 접근도 가능합니다.
-
-### 대시보드 구성
+### 대시보드
 
 **KEDA ScaledObjects** (`/d/y2ks-keda`)
 
-| 패널 | 설명 | 데이터 없는 경우 |
-|------|------|-----------------|
-| ScaledObject - Current Replicas | scaler 메트릭 값 추이 | KEDA operator ServiceMonitor 미수집 시 |
-| ScaledObject - Active | ScaledObject 일시정지 여부 (0=활성) | 동일 |
-| SQS Queue Length | y2ks-queue 메시지 수 | KEDA가 SQS를 아직 폴링 안 한 경우 |
-| Worker Replicas | Current vs Desired 비교 | kube-state-metrics 수집 후 표시 |
-| KEDA Operator - Errors | 스케일링 실패율 | 정상 시 데이터 없음(에러 없음) |
-| KEDA - ScaledObject Reconcile Duration | 스케일 루프 p99 지연 | KEDA 내부 메트릭 미노출 시 |
+| 패널 | 설명 |
+|------|------|
+| ScaledObject - Current Replicas | scaler 메트릭 값 추이 |
+| SQS Queue Length | y2ks-queue 메시지 수 |
+| Worker Replicas | Current vs Desired 비교 |
+| KEDA Operator - Errors | 스케일링 실패율 |
 
 **Karpenter Node Autoscaling** (`/d/y2ks-karpenter`)
 
-| 패널 | 설명 | 데이터 없는 경우 |
-|------|------|-----------------|
-| Nodes by Provisioner | nodepool별 노드 수 | Karpenter ServiceMonitor 미수집 시 |
-| Total Cluster Nodes | 전체 노드 수 | kube-state-metrics 수집 후 표시 |
-| Pending Pods | 스케줄 대기 파드 수 | 정상 시 0 |
-| Karpenter - Nodes Launched / Terminated | 노드 생성/삭제 속도 | 스케일링 이벤트 없으면 데이터 없음 |
-| Node Launch Duration (p99) | 노드 준비까지 걸린 시간 | 동일 |
-| Node CPU/Memory Allocatable vs Requested | 노드별 리소스 여유 | 정상 수집 시 표시 |
-| Karpenter - Disruption Decisions | consolidation/expiry 결정 수 | 이벤트 없으면 데이터 없음 |
+| 패널 | 설명 |
+|------|------|
+| Total Cluster Nodes | 전체 노드 수 |
+| Pending Pods | 스케줄 대기 파드 수 |
+| Nodes Launched / Terminated | 노드 생성/삭제 속도 |
+| Node CPU/Memory Allocatable vs Requested | 노드별 리소스 여유 |
 
-### 대시보드 보는 순서
-
-부하 테스트 시 아래 순서로 확인합니다:
+### 부하 테스트 시 확인 순서
 
 ```
-1. Karpenter 대시보드
-   → Total Cluster Nodes, Pending Pods 확인
-
-2. KEDA 대시보드
-   → SQS Queue Length 증가 확인
-   → Worker Replicas 스케일아웃 확인
-
-3. 다시 Karpenter 대시보드
-   → Pending Pods 증가 → Nodes Launched 확인
-   → Node CPU/Memory Requested 증가 확인
+1. Karpenter 대시보드 → Total Cluster Nodes, Pending Pods 확인
+2. KEDA 대시보드     → SQS Queue Length 증가 → Worker Replicas 스케일아웃 확인
+3. Karpenter 대시보드 → Nodes Launched 확인 → Node CPU/Memory Requested 증가 확인
 ```
 
 ### 삭제
@@ -421,7 +347,5 @@ terraform output amg_endpoint
 cd monitoring
 terraform destroy
 ```
-
-삭제 순서: 대시보드 → datasource → prometheus helm uninstall → AMP → AMG → IAM role
 
 > 기존 `terraform/` 인프라(EKS, VPC 등)에는 영향 없음
