@@ -120,7 +120,10 @@ resource "null_resource" "install_keda" {
       helm repo update
       helm upgrade --install keda kedacore/keda `
         --namespace keda --create-namespace `
-        --version 2.16.0 `
+        --set prometheus.operator.enabled=true `
+        --set prometheus.operator.port=8080 `
+        --set prometheus.metricServer.enabled=true `
+        --set prometheus.metricServer.port=9022 `
         --wait --timeout 5m
     EOT
   }

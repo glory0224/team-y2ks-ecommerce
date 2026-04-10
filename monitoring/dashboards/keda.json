@@ -2,7 +2,7 @@
   "title": "KEDA ScaledObjects",
   "uid": "y2ks-keda",
   "schemaVersion": 38,
-  "version": 2,
+  "version": 3,
   "refresh": "30s",
   "time": { "from": "now-1h", "to": "now" },
   "templating": { "list": [] },
@@ -43,15 +43,15 @@
     },
     {
       "id": 3,
-      "title": "Kinesis Stream Shard Depth (y2ks-traffic-stream)",
+      "title": "SQS Queue Depth (y2ks-queue)",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
-          "expr": "keda_scaler_metrics_value{scaler=\"awsKinesisStreamScaler\"}",
-          "legendFormat": "Shard Depth",
+          "expr": "keda_scaler_metrics_value{scaler=\"awsSqsQueueScaler\"}",
+          "legendFormat": "Queue Depth",
           "refId": "A"
         }
       ]
