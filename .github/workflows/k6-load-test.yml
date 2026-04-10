@@ -1,0 +1,87 @@
+name: k6 Coupon Load Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: "Frontend LoadBalancer URL (예: http://abc123.ap-northeast-2.elb.amazonaws.com)"
+        required: true
+        type: string
+      max_vus:
+        description: "최대 동시 접속자 수 (VU)"
+        required: false
+        default: "1000"
+        type: string
+      duration:
+        description: "최대 부하 유지 시간 (예: 2m, 5m)"
+        required: false
+        default: "2m"
+        type: string
+
+permissions:
+  id-token: write   # OIDC 토큰 발급 필수
+  contents: read
+
+jobs:
+  load-test:
+    name: Run k6 Load Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_K6_ROLE_ARN }}
+          aws-region: ap-northeast-2
+
+      - name: Get AMP Remote Write endpoint
+        id: amp
+        run: |
+          # monitoring/terraform.tfstate에서 AMP endpoint 추출
+          ENDPOINT=$(aws aps list-workspaces --region ap-northeast-2 \
+            --query "workspaces[?alias=='y2ks-amp'].prometheusEndpoint" \
+            --output text)
+          echo "endpoint=${ENDPOINT}api/v1/remote_write" >> $GITHUB_OUTPUT
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring \
+            --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 \
+            --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install -y k6
+
+      - name: Patch VU count and duration in script
+        run: |
+          # max_vus와 duration을 입력값으로 동적 치환
+          sed -i \
+            -e "s/target: 1000/target: ${{ inputs.max_vus }}/g" \
+            -e "s/duration: '2m'/duration: '${{ inputs.duration }}'/g" \
+            k6/coupon-load-test.js
+
+      - name: Run k6
+        env:
+          K6_PROMETHEUS_RW_SERVER_URL: ${{ steps.amp.outputs.endpoint }}
+          K6_PROMETHEUS_RW_REGION: ap-northeast-2
+          K6_PROMETHEUS_RW_AWS_SIGV4_ENABLED: "true"
+          TARGET_URL: ${{ inputs.target_url }}
+        run: |
+          k6 run \
+            --out prometheus-remote-write \
+            k6/coupon-load-test.js
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## k6 Load Test 완료" >> $GITHUB_STEP_SUMMARY
+          echo "- Target: ${{ inputs.target_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Max VUs: ${{ inputs.max_vus }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Duration: ${{ inputs.duration }}" >> $GITHUB_STEP_SUMMARY
+          echo "- AMG 대시보드: https://g-9a9a0de0f0.grafana-workspace.ap-northeast-2.amazonaws.com" >> $GITHUB_STEP_SUMMARY

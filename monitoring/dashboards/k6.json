@@ -1,0 +1,117 @@
+{
+  "title": "k6 Coupon Load Test",
+  "uid": "y2ks-k6",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Active VUs",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "k6_vus",
+          "legendFormat": "VUs",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background"
+      }
+    },
+    {
+      "id": 2,
+      "title": "Total RPS",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "rate(k6_http_reqs_total[1m])",
+          "legendFormat": "RPS",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "HTTP Response Time Percentiles",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "histogram_quantile(0.50, sum(rate(k6_http_req_duration_bucket[1m])) by (le))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "histogram_quantile(0.95, sum(rate(k6_http_req_duration_bucket[1m])) by (le))",
+          "legendFormat": "p95",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "histogram_quantile(0.99, sum(rate(k6_http_req_duration_bucket[1m])) by (le))",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Error Rate (%)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "rate(k6_http_req_failed_total[1m]) / rate(k6_http_reqs_total[1m]) * 100",
+          "legendFormat": "Error Rate %",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "/api/claim RPS",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "rate(k6_http_reqs_total{url=~\".*/api/claim\"}[1m])",
+          "legendFormat": "/api/claim RPS",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "/api/check RPS",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "rate(k6_http_reqs_total{url=~\".*/api/check.*\"}[1m])",
+          "legendFormat": "/api/check RPS",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}
