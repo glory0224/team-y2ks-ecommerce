@@ -55,12 +55,10 @@ resource "aws_iam_role_policy" "amp_ingest" {
 
 # ============================================================
 # kube-prometheus-stack 설치
-# - AMP remote_write (IRSA SigV4, roleArn 불필요)
-# - KEDA ServiceMonitor (port: metricsservice/9666, label: app.kubernetes.io/name: keda-operator)
-# - Karpenter ServiceMonitor (port: http-metrics/8080, label: app.kubernetes.io/name: karpenter)
+# - AMP remote_write (IRSA SigV4)
 # - serviceMonitorSelector: {} → 모든 네임스페이스 ServiceMonitor 수집
-#
-# 다음에 재설치할 때: terraform apply 한 번으로 전부 반영됨
+# - KEDA/Karpenter ServiceMonitor는 이 리소스에서 직접 적용
+#   (helm/y2ks chart와 분리 — monitoring/ 영역에서 단독 관리)
 # ============================================================
 resource "null_resource" "prometheus_stack" {
   triggers = {
@@ -90,9 +88,53 @@ resource "null_resource" "prometheus_stack" {
 
       Remove-Item $tmpFile
 
-      # KEDA/Karpenter ServiceMonitor 적용 (helm/y2ks chart와 독립적으로 보장)
+      # KEDA/Karpenter ServiceMonitor 직접 적용
       aws eks update-kubeconfig --name ${var.cluster_name} --region ${var.aws_region}
-      kubectl apply -f "${path.module}/../helm/y2ks/templates/servicemonitors.yaml"
+
+      $sm = @"
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: keda-operator
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: keda-operator
+  namespaceSelector:
+    matchNames:
+      - keda
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: karpenter
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: karpenter
+  namespaceSelector:
+    matchNames:
+      - karpenter
+  endpoints:
+    - port: http-metrics
+      interval: 30s
+      path: /metrics
+"@
+      $smFile = [System.IO.Path]::GetTempFileName() + ".yaml"
+      [System.IO.File]::WriteAllText($smFile, $sm, [System.Text.Encoding]::UTF8)
+      kubectl apply -f $smFile
+      Remove-Item $smFile
 
       Write-Host "kube-prometheus-stack 설치 완료"
     EOT

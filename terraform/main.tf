@@ -204,7 +204,6 @@ resource "null_resource" "install_y2ks" {
       file("${path.module}/../helm/y2ks/templates/frontend.yaml"),
       file("${path.module}/../helm/y2ks/templates/worker.yaml"),
       file("${path.module}/../helm/y2ks/templates/keda.yaml"),
-      file("${path.module}/../helm/y2ks/templates/servicemonitors.yaml"),
     ]))
   }
 
@@ -238,8 +237,10 @@ resource "null_resource" "install_y2ks" {
       $timeout = 180
       $elapsed = 0
       while ($elapsed -lt $timeout) {
-        $classicElbs = (aws elb describe-load-balancers --query "LoadBalancerDescriptions[?VPCId=='$vpcId'].LoadBalancerName" --output text 2>$null).Trim()
-        $v2Elbs = (aws elbv2 describe-load-balancers --query "LoadBalancers[?VpcId=='$vpcId'].LoadBalancerArn" --output text 2>$null).Trim()
+        $classicElbs = (aws elb describe-load-balancers --query "LoadBalancerDescriptions[?VPCId=='$vpcId'].LoadBalancerName" --output text 2>$null)
+        $v2Elbs = (aws elbv2 describe-load-balancers --query "LoadBalancers[?VpcId=='$vpcId'].LoadBalancerArn" --output text 2>$null)
+        $classicElbs = if ($classicElbs) { $classicElbs.Trim() } else { "" }
+        $v2Elbs = if ($v2Elbs) { $v2Elbs.Trim() } else { "" }
         if ([string]::IsNullOrEmpty($classicElbs) -and [string]::IsNullOrEmpty($v2Elbs)) { Write-Host "ELB 삭제 완료 확인"; break }
         Write-Host "ELB 삭제 대기 중... ($elapsed s)"
         Start-Sleep -Seconds 10
