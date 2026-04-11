@@ -95,7 +95,6 @@ resource "null_resource" "prometheus_stack" {
 
       helm upgrade --install prometheus prometheus-community/kube-prometheus-stack `
         --namespace monitoring --create-namespace `
-        --skip-crds `
         --set prometheusOperator.admissionWebhooks.enabled=false `
         --set prometheusOperator.admissionWebhooks.patch.enabled=false `
         --set prometheusOperator.tls.enabled=false `
