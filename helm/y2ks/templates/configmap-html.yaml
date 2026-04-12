@@ -178,17 +178,9 @@ data:
     .logo{font-size:22px;font-weight:800;letter-spacing:8px;color:#fff}
     .logo span{color:var(--accent);font-size:12px;font-weight:400;letter-spacing:3px;margin-left:12px;vertical-align:middle}
     .header-right{display:flex;align-items:center;gap:16px}
-    .refresh-btn{background:rgba(200,169,110,.12);border:1px solid rgba(200,169,110,.3);color:var(--accent);padding:8px 18px;border-radius:6px;font-size:13px;font-family:inherit;cursor:pointer;transition:all .2s}
-    .refresh-btn:hover{background:rgba(200,169,110,.2)}
     .reset-btn{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:var(--red);padding:8px 18px;border-radius:6px;font-size:13px;font-family:inherit;cursor:pointer;transition:all .2s}
     .reset-btn:hover{background:rgba(239,68,68,.2)}
     .last-updated{font-size:12px;color:#555}
-    .tab-nav{background:#0a0a0a;border-bottom:1px solid #1f1f1f;padding:0 40px;display:flex;gap:0}
-    .tab-btn{padding:14px 24px;font-size:13px;font-weight:600;color:#555;cursor:pointer;border:none;background:none;font-family:inherit;transition:all .2s;border-bottom:2px solid transparent;letter-spacing:.5px}
-    .tab-btn:hover{color:#e8e8e8}
-    .tab-btn.active{color:var(--accent);border-bottom-color:var(--accent)}
-    .tab-panel{display:none}
-    .tab-panel.active{display:block}
     .main{max-width:1400px;margin:0 auto;padding:32px 40px}
     .stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:32px}
     @media(max-width:900px){.stats-grid{grid-template-columns:repeat(2,1fr)}}
@@ -202,10 +194,6 @@ data:
     .v-blue{color:var(--blue)}
     .v-purple{color:var(--purple)}
     .section-title{font-size:13px;letter-spacing:2px;color:#555;text-transform:uppercase;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid #1f1f1f}
-    .queue-row{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:32px}
-    .queue-card{background:#111;border:1px solid #1f1f1f;border-radius:10px;padding:24px}
-    .progress-bar{height:6px;background:#1f1f1f;border-radius:3px;margin-top:16px;overflow:hidden}
-    .progress-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--accent),var(--accent-d));transition:width .5s ease}
     table{width:100%;border-collapse:collapse}
     .table-wrap{background:#111;border:1px solid #1f1f1f;border-radius:10px;overflow:hidden}
     th{background:#0a0a0a;padding:12px 16px;text-align:left;font-size:11px;letter-spacing:1.5px;color:#555;text-transform:uppercase;font-weight:600;border-bottom:1px solid #1f1f1f}
@@ -233,7 +221,6 @@ data:
       <div class="header-right">
         <span class="last-updated" id="last-updated">-</span>
         <button class="reset-btn" onclick="resetTickets()">티켓 초기화</button>
-        <button class="refresh-btn" onclick="loadAll()">새로고침</button>
       </div>
     </header>
     
@@ -259,20 +246,6 @@ data:
           <div class="stat-label">이메일 발송</div>
           <div class="stat-value v-blue" id="s-email">-</div>
           <div class="stat-sub">SES 발송 완료</div>
-        </div>
-      </div>
-      <div class="queue-row">
-        <div class="queue-card">
-          <div class="section-title">SQS 대기열</div>
-          <div class="stat-value v-accent" id="s-queue">-</div>
-          <div class="stat-sub" style="margin-top:8px">대기 중인 메시지</div>
-          <div class="progress-bar"><div class="progress-fill" id="queue-bar" style="width:0%"></div></div>
-        </div>
-        <div class="queue-card">
-          <div class="section-title">처리 중 (In-Flight)</div>
-          <div class="stat-value v-blue" id="s-inflight">-</div>
-          <div class="stat-sub" style="margin-top:8px">Worker 처리 중</div>
-          <div class="progress-bar"><div class="progress-fill" id="inflight-bar" style="width:0%;background:linear-gradient(90deg,var(--blue),#60a5fa)"></div></div>
         </div>
       </div>
       <div class="section-title" id="claims-title">클레임 내역</div>
@@ -322,10 +295,6 @@ data:
         document.getElementById('s-winner').textContent = d.winner_count;
         document.getElementById('s-loser').textContent = d.loser_count;
         document.getElementById('s-email').textContent = d.email_sent_count;
-        document.getElementById('s-queue').textContent = d.queue_depth;
-        document.getElementById('s-inflight').textContent = d.in_flight;
-        document.getElementById('queue-bar').style.width = Math.min(d.queue_depth / 50 * 100, 100) + '%';
-        document.getElementById('inflight-bar').style.width = Math.min(d.in_flight / 50 * 100, 100) + '%';
         document.getElementById('last-updated').textContent = '업데이트: ' + new Date().toLocaleTimeString('ko-KR');
         return d;
       } catch(e) { console.error(e); return null; }
@@ -389,7 +358,7 @@ data:
     }
     
     loadAll();
-    setInterval(loadAll, 15000);
+    setInterval(loadAll, 3000);
     </script>
     </body>
     </html>
