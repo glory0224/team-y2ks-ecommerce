@@ -10,6 +10,7 @@ resource "null_resource" "amg_dashboards" {
     dashboard_hash = sha256(join("", [
       file("${path.module}/dashboards/keda.json"),
       file("${path.module}/dashboards/karpenter.json"),
+      file("${path.module}/dashboards/k6.json"),
     ]))
   }
 
@@ -45,7 +46,7 @@ resource "null_resource" "amg_dashboards" {
       $folderId = $folder.id
 
       # 대시보드 upsert (overwrite: true 로 멱등 보장)
-      foreach ($file in @("${path.module}/dashboards/keda.json", "${path.module}/dashboards/karpenter.json")) {
+      foreach ($file in @("${path.module}/dashboards/keda.json", "${path.module}/dashboards/karpenter.json", "${path.module}/dashboards/k6.json")) {
         $dashboard = Get-Content $file -Raw | ConvertFrom-Json
         $payload = @{ dashboard = $dashboard; folderId = $folderId; overwrite = $true } | ConvertTo-Json -Depth 20
         Invoke-RestMethod -Uri "$grafanaUrl/api/dashboards/db" -Method POST -Headers $headers -Body $payload | Out-Null

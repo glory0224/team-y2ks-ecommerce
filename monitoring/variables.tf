@@ -19,7 +19,7 @@ variable "amp_workspace_alias" {
 variable "amg_workspace_name" {
   description = "AMG workspace 이름"
   type        = string
-  default     = "y2ks-grafana"
+  default     = "y2ks-grafana-v2"
 }
 
 variable "sso_instance_arn" {

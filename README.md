@@ -270,7 +270,17 @@ KEDA와 Karpenter의 스케일링 동작을 AMP + AMG로 시각화합니다.
               ▼
         [AMG - Amazon Managed Grafana]
               │  IAM Identity Center(SSO) 로그인
-              └── KEDA / Karpenter 대시보드
+              └── KEDA / Karpenter / k6 Load Test 대시보드
+
+[k6 부하 테스트 Job]
+  └── k6 컨테이너
+        │  --out experimental-prometheus-rw
+        │  → localhost:8005 (SigV4 proxy 사이드카)
+        ▼
+  [SigV4 proxy 사이드카]
+        │  AWS SigV4 서명 후 AMP에 직접 remote_write
+        ▼
+  [AMP → AMG k6 Load Test 대시보드]
 ```
 
 ### 배포
@@ -287,8 +297,9 @@ terraform apply
 - AMG workspace 생성 (IAM Identity Center SSO 인증)
 - kube-prometheus-stack 설치 (AMP remote_write + KEDA/Karpenter ServiceMonitor 포함)
 - AMG에 AMP datasource 자동 연결
-- KEDA / Karpenter 대시보드 프로비저닝
+- KEDA / Karpenter / k6 Load Test 대시보드 프로비저닝
 - IAM Identity Center에 등록된 전체 사용자에게 AMG ADMIN 권한 자동 부여
+- k6 부하 테스트용 ConfigMap (`y2ks-k6-config`) 자동 생성 — AMP workspace ID 포함
 
 ### IAM Identity Center 사용자 생성
 
@@ -316,30 +327,104 @@ cd monitoring && terraform output amg_endpoint
 
 ### 대시보드
 
+---
+
 **KEDA ScaledObjects** (`/d/y2ks-keda`)
 
-| 패널 | 설명 |
+KEDA가 SQS 메시지 수를 기반으로 Worker Pod를 자동 스케일링하는 과정을 보여줍니다.
+
+| 패널 | 의미 |
 |------|------|
-| ScaledObject - Current Replicas | scaler 메트릭 값 추이 |
-| SQS Queue Length | y2ks-queue 메시지 수 |
-| Worker Replicas | Current vs Desired 비교 |
-| KEDA Operator - Errors | 스케일링 실패율 |
+| ScaledObject - Current Replicas | KEDA scaler가 현재 측정하는 메트릭 값. SQS 메시지 수가 올라갈수록 이 값이 커지고 Worker 스케일아웃이 트리거됩니다 |
+| ScaledObject - Active | ScaledObject가 현재 활성 상태인지 여부. 1이면 스케일링 중, 0이면 대기 상태 |
+| SQS Queue Depth | y2ks-queue에 쌓인 미처리 메시지 수. 부하 테스트 시 급증하고 Worker가 처리하면서 감소합니다 |
+| Worker Replicas | Worker Deployment의 현재(Current) vs 목표(Desired) Pod 수. KEDA가 SQS depth를 보고 Desired를 올리면 Current가 따라 올라갑니다 |
+| KEDA Operator - Errors | KEDA가 스케일링 판단 중 발생한 오류 수. 정상이면 0에 가깝습니다 |
+| ScaledObject Reconcile Duration | KEDA가 ScaledObject 상태를 재평가하는 데 걸리는 시간. 값이 크면 스케일링 반응이 느려집니다 |
+
+---
 
 **Karpenter Node Autoscaling** (`/d/y2ks-karpenter`)
 
-| 패널 | 설명 |
+Pending Pod가 생기면 Karpenter가 새 EC2 노드를 자동으로 프로비저닝하는 과정을 보여줍니다.
+
+| 패널 | 의미 |
 |------|------|
-| Total Cluster Nodes | 전체 노드 수 |
-| Pending Pods | 스케줄 대기 파드 수 |
-| Nodes Launched / Terminated | 노드 생성/삭제 속도 |
-| Node CPU/Memory Allocatable vs Requested | 노드별 리소스 여유 |
+| Nodes by NodePool | NodePool별 현재 노드 수 추이. 부하 증가 시 노드가 추가되고 부하 감소 시 제거됩니다 |
+| Total Cluster Nodes | 클러스터 전체 노드 수. 스케일아웃/인 결과를 한눈에 확인합니다 |
+| Pending Pods | 아직 노드에 배치되지 못한 Pod 수. 이 값이 올라가면 Karpenter가 새 노드를 프로비저닝합니다 |
+| Node Provisioning Duration (p99) | 노드 생성 요청부터 Pod가 실제로 시작되기까지 걸린 시간의 p99. 값이 크면 콜드 스타트 지연이 있다는 의미입니다 |
+| NodeClaims Launched / Terminated | 초당 노드 생성/삭제 속도. 부하 테스트 시 Launched가 급증하고 테스트 종료 후 Terminated가 올라옵니다 |
+| Node CPU Allocatable vs Requested | 노드별 할당 가능한 CPU와 실제 요청된 CPU 비교. Requested가 Allocatable에 가까워지면 Karpenter가 새 노드를 추가합니다 |
+| Node Memory Allocatable vs Requested | 노드별 할당 가능한 메모리와 실제 요청된 메모리 비교. CPU와 동일한 방식으로 스케일링 판단에 사용됩니다 |
+
+---
+
+**k6 Load Test** (`/d/y2ks-k6`)
+
+k6가 `/api/claim`에 부하를 주는 동안 애플리케이션 성능과 인프라 반응을 함께 보여줍니다.
+
+| 패널 | 의미 |
+|------|------|
+| Virtual Users (VU) | 현재 동시 요청 수(Active)와 최대 설정 VU 수(Max). ramp-up → 유지 → ramp-down 곡선이 보입니다 |
+| HTTP Request Rate | 초당 성공 요청 수(req/s). VU가 올라갈수록 함께 증가합니다 |
+| Response Time Percentiles | p50(중간값) / p95 / p99 응답시간. p99가 p50보다 크게 높으면 일부 요청에서 지연이 발생하는 것입니다 |
+| Claim Success / Fail Rate | `/api/claim` 성공 vs 실패 req/s. 실패가 0에 가까우면 정상입니다 |
+| SQS Queue Depth during Load Test | 부하 중 SQS에 쌓이는 메시지 수. k6가 요청을 보내는 속도가 Worker 처리 속도보다 빠를 때 쌓입니다 |
+| Worker Replicas during Load Test | 부하 중 KEDA가 Worker를 몇 개까지 늘렸는지. SQS depth 증가 → KEDA 스케일아웃 → Worker 증가 순서로 반응합니다 |
+
+---
+
+### 부하 테스트
+
+k6 Job은 `k6/` 폴더에서 독립적으로 관리됩니다.  
+`monitoring apply` 완료 후 아래 명령어로 실행합니다.
+
+**사전 조건**
+
+- `cd monitoring && terraform apply` 완료 — `y2ks-k6-config` ConfigMap 자동 생성됨
+- `worker-sa` ServiceAccount에 `aps:RemoteWrite` 권한 포함 (`terraform/iam.tf`)
+
+**실행**
+
+```bash
+# 티켓 초기화 (이전 테스트 데이터 제거)
+kubectl exec deployment/y2ks-frontend -c web -- python3 -c \
+  "import redis; r = redis.Redis(host='redis-service'); r.set('tickets', 100)"
+
+# k6 부하 테스트 시작
+kubectl delete job k6-loadtest --ignore-not-found
+kubectl apply -f k6/job.yaml
+
+# 실시간 로그 확인
+kubectl logs -f job/k6-loadtest -c k6
+```
+
+**시나리오** (총 4분)
+
+| 구간 | 시간 | VU 수 | 설명 |
+|------|------|-------|------|
+| ramp-up | 30s | 0 → 50 | 워밍업 |
+| ramp-up | 2m | 50 → 200 | 최대 부하 |
+| sustained | 1m | 200 | 유지 |
+| ramp-down | 30s | 200 → 0 | 쿨다운 |
+
+**메트릭 흐름**
+
+```
+k6 → SigV4 proxy sidecar (localhost:8005) → AMP → Grafana k6 Load Test 대시보드
+```
+
+k6가 SigV4 proxy 사이드카를 통해 AMP에 직접 메트릭을 씁니다.  
+`monitoring apply/destroy` 시 AMP workspace ID가 담긴 ConfigMap이 자동으로 생성/삭제되므로  
+별도 설정 없이 `kubectl apply -f k6/job.yaml`만 실행하면 됩니다.
 
 ### 부하 테스트 시 확인 순서
 
 ```
-1. Karpenter 대시보드 → Total Cluster Nodes, Pending Pods 확인
-2. KEDA 대시보드     → SQS Queue Length 증가 → Worker Replicas 스케일아웃 확인
-3. Karpenter 대시보드 → Nodes Launched 확인 → Node CPU/Memory Requested 증가 확인
+1. k6 Load Test 대시보드  → VU 증가, req/s, p50/p95/p99 응답시간 확인
+2. KEDA 대시보드          → SQS Queue Depth 증가 → Worker Replicas 스케일아웃 확인
+3. Karpenter 대시보드     → Pending Pods 증가 → Nodes Launched → CPU/Memory Requested 증가 확인
 ```
 
 ### 삭제
@@ -349,4 +434,5 @@ cd monitoring
 terraform destroy
 ```
 
-> 기존 `terraform/` 인프라(EKS, VPC 등)에는 영향 없음
+> 기존 `terraform/` 인프라(EKS, VPC 등)에는 영향 없음  
+> destroy 시 k6 ConfigMap(`y2ks-k6-config`)도 자동 삭제됨

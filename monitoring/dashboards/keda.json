@@ -2,7 +2,7 @@
   "title": "KEDA ScaledObjects",
   "uid": "y2ks-keda",
   "schemaVersion": 38,
-  "version": 3,
+  "version": 6,
   "refresh": "30s",
   "time": { "from": "now-1h", "to": "now" },
   "templating": { "list": [] },
@@ -16,8 +16,8 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
-          "expr": "keda_scaler_metrics_value",
-          "legendFormat": "{{scaler}} / {{scaledObject}}",
+          "expr": "max by (scaledObject) (keda_scaler_metrics_value)",
+          "legendFormat": "{{scaledObject}}",
           "refId": "A"
         }
       ]
@@ -31,7 +31,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
-          "expr": "keda_scaler_active",
+          "expr": "max by (scaledObject) (keda_scaler_active)",
           "legendFormat": "{{scaledObject}}",
           "refId": "A"
         }
@@ -50,7 +50,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
-          "expr": "keda_scaler_metrics_value{scaler=\"awsSqsQueueScaler\"}",
+          "expr": "max(keda_scaler_metrics_value{scaler=\"awsSqsQueueScaler\"})",
           "legendFormat": "Queue Depth",
           "refId": "A"
         }
@@ -65,13 +65,13 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
-          "expr": "kube_deployment_status_replicas{deployment=\"y2ks-worker\"}",
+          "expr": "max(kube_deployment_status_replicas{deployment=\"y2ks-worker\"})",
           "legendFormat": "Current",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
-          "expr": "kube_deployment_spec_replicas{deployment=\"y2ks-worker\"}",
+          "expr": "max(kube_deployment_spec_replicas{deployment=\"y2ks-worker\"})",
           "legendFormat": "Desired",
           "refId": "B"
         }
@@ -86,7 +86,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
-          "expr": "rate(keda_scaler_detail_errors_total[5m])",
+          "expr": "sum by (scaledObject) (rate(keda_scaler_detail_errors_total[5m]))",
           "legendFormat": "{{scaledObject}} errors/s",
           "refId": "A"
         }
@@ -101,7 +101,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
-          "expr": "keda_internal_scale_loop_latency_seconds",
+          "expr": "max(keda_internal_scale_loop_latency_seconds)",
           "legendFormat": "latency",
           "refId": "A"
         }

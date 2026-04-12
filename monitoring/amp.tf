@@ -75,6 +75,8 @@ resource "null_resource" "prometheus_stack" {
     amp_endpoint = aws_prometheus_workspace.main.prometheus_endpoint
     role_arn     = aws_iam_role.amp_ingest.arn
     values_hash  = filesha256("${path.module}/prometheus-values.yaml")
+    cluster_name = var.cluster_name
+    region       = var.aws_region
   }
 
   provisioner "local-exec" {
@@ -181,13 +183,46 @@ spec:
       Write-Host "[OK] ServiceMonitor 적용 완료"
 
       Write-Host "=== prometheus_stack 완료 ==="
+
+      # ── 4. k6 ampEndpoint ConfigMap 생성/업데이트 ────────────────────
+      $ampEndpoint = "${aws_prometheus_workspace.main.prometheus_endpoint}api/v1/remote_write"
+      $ampWorkspaceId = "${aws_prometheus_workspace.main.id}"
+      $cm = @"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: y2ks-k6-config
+  namespace: default
+data:
+  ampEndpoint: "$ampEndpoint"
+  ampWorkspaceId: "$ampWorkspaceId"
+"@
+      $cmFile = [System.IO.Path]::GetTempFileName() + ".yaml"
+      [System.IO.File]::WriteAllText($cmFile, $cm, [System.Text.Encoding]::UTF8)
+      kubectl apply -f $cmFile
+      if ($LASTEXITCODE -ne 0) {
+        Remove-Item $cmFile -ErrorAction SilentlyContinue
+        throw "y2ks-k6-config ConfigMap 적용 실패 (exit $LASTEXITCODE)"
+      }
+      Remove-Item $cmFile
+      Write-Host "[OK] y2ks-k6-config ConfigMap 적용 완료"
     EOT
   }
 
   provisioner "local-exec" {
     when        = destroy
     interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
-    command     = "helm uninstall prometheus -n monitoring --ignore-not-found 2>&1; Write-Host done"
+    command     = <<-EOT
+      aws eks update-kubeconfig --name ${self.triggers.cluster_name} --region ${self.triggers.region} 2>$null
+
+      # k6 ConfigMap 삭제 — stdout 모드로 자동 fallback
+      kubectl delete configmap y2ks-k6-config --ignore-not-found
+      Write-Host "[OK] y2ks-k6-config ConfigMap 삭제 완료"
+
+      # prometheus-stack 제거
+      helm uninstall prometheus -n monitoring --ignore-not-found 2>&1
+      Write-Host "[OK] prometheus uninstall 완료"
+    EOT
   }
 
   depends_on = [
