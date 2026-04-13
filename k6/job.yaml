@@ -45,6 +45,7 @@ spec:
         command: ["/bin/sh", "-c"]
         args:
           - |
+            apk add --no-cache aws-cli jq
             WORKSPACE_ID=$(cat /k6-config/ampWorkspaceId 2>/dev/null || echo "")
             if [ -n "$WORKSPACE_ID" ]; then
               echo "[k6] waiting for sigv4proxy on :8005..."
@@ -59,11 +60,29 @@ spec:
               export K6_PROMETHEUS_RW_TREND_AS_NATIVE_HISTOGRAM=false
               export K6_PROMETHEUS_RW_TREND_STATS="p(50),p(95),p(99)"
               echo "[k6] output: $K6_PROMETHEUS_RW_SERVER_URL"
-              k6 run /scripts/load-test.js --out experimental-prometheus-rw
+              k6 run /scripts/load-test.js --out experimental-prometheus-rw --out json=result.json
             else
               echo "[k6] stdout mode"
-              k6 run /scripts/load-test.js
+              k6 run /scripts/load-test.js --out json=result.json
             fi
+
+            # --- S3 + Athena Pipeline ---
+            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+            RUN_DATE=$(date -u +"%Y-%m-%d")
+            RUN_ID="job-$(date -u +"%H%M%S")"
+            BUCKET_NAME="y2ks-athena-${ACCOUNT_ID}"
+            
+            echo "[k6] Uploading result.json to S3..."
+            S3_PATH="s3://${BUCKET_NAME}/k6/raw/run_date=${RUN_DATE}/run_id=${RUN_ID}/result.json"
+            aws s3 cp result.json ${S3_PATH}
+            
+            echo "[k6] Registering partition in Athena..."
+            aws athena start-query-execution \
+              --query-string "ALTER TABLE y2ks_analytics.k6_raw ADD IF NOT EXISTS PARTITION (run_date='${RUN_DATE}', run_id='${RUN_ID}') LOCATION 's3://${BUCKET_NAME}/k6/raw/run_date=${RUN_DATE}/run_id=${RUN_ID}/'" \
+              --work-group "y2ks-analytics" \
+              --region ap-northeast-2
+              
+            echo "[k6] Job Completed Successfully."
         env:
         - name: TARGET_URL
           value: "http://y2ks-frontend-svc"
