@@ -59,7 +59,7 @@ resource "aws_glue_catalog_table" "k6_raw" {
     }
     columns {
       name = "data"
-      type = "struct<time:string,value:double,tags:struct<method:string,url:string,status:string>>"
+      type = "struct<time:string,value:double,tags:struct<method:string,url:string,status:string,name:string,user_id:string>>"
     }
   }
 }

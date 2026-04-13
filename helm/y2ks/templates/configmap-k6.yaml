@@ -23,8 +23,12 @@ data:
     };
 
     export default function () {
-      const res = http.post(`${BASE_URL}/api/claim`, null, {
-        tags: { name: 'claim' },
+      const userId = `user_${__VU}_${__ITER}`;
+      const payload = JSON.stringify({ user_id: userId });
+
+      const res = http.post(`${BASE_URL}/api/claim`, payload, {
+        headers: { 'Content-Type': 'application/json' },
+        tags: { name: 'claim', user_id: userId },
         timeout: '10s',
       });
 
