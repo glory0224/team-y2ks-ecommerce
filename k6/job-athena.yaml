@@ -1,72 +1,34 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: k6-loadtest
+  name: k6-athena
   labels:
-    app: k6-loadtest
+    app: k6-athena
 spec:
   ttlSecondsAfterFinished: 3600
   backoffLimit: 0
   template:
     metadata:
       labels:
-        app: k6-loadtest
+        app: k6-athena
     spec:
       serviceAccountName: worker-sa
       restartPolicy: Never
       priorityClassName: y2ks-high
       containers:
-      - name: sigv4proxy
-        image: public.ecr.aws/aws-observability/aws-sigv4-proxy:latest
-        args:
-          - --name
-          - aps
-          - --region
-          - $(AWS_REGION)
-          - --host
-          - aps-workspaces.$(AWS_REGION).amazonaws.com
-          - --port
-          - ":8005"
-        env:
-        - name: AWS_REGION
-          valueFrom:
-            configMapKeyRef:
-              name: aws-config
-              key: AWS_REGION
-        resources:
-          requests:
-            cpu: 50m
-            memory: 64Mi
-          limits:
-            cpu: 200m
-            memory: 128Mi
       - name: k6
         image: grafana/k6:latest
         command: ["/bin/sh", "-c"]
         args:
           - |
+            # 1. aws-cli 및 jq 설치 (S3 업로드 및 파티션 가공용)
             apk add --no-cache aws-cli jq
-            WORKSPACE_ID=$(cat /k6-config/ampWorkspaceId 2>/dev/null || echo "")
-            if [ -n "$WORKSPACE_ID" ]; then
-              echo "[k6] waiting for sigv4proxy on :8005..."
-              WAITED=0
-              while [ $WAITED -lt 30 ]; do
-                (echo > /dev/tcp/localhost/8005) 2>/dev/null && break
-                sleep 1
-                WAITED=$((WAITED+1))
-              done
-              echo "[k6] sigv4proxy ready (waited ${WAITED}s)"
-              export K6_PROMETHEUS_RW_SERVER_URL="http://localhost:8005/workspaces/${WORKSPACE_ID}/api/v1/remote_write"
-              export K6_PROMETHEUS_RW_TREND_AS_NATIVE_HISTOGRAM=false
-              export K6_PROMETHEUS_RW_TREND_STATS="p(50),p(95),p(99)"
-              echo "[k6] output: $K6_PROMETHEUS_RW_SERVER_URL"
-              k6 run /scripts/load-test.js --out experimental-prometheus-rw --out json=result.json
-            else
-              echo "[k6] stdout mode"
-              k6 run /scripts/load-test.js --out json=result.json
-            fi
 
-            # --- S3 + Athena Pipeline ---
+            # 2. 부하 테스트 실행 (JSON으로만 추출, AMP로는 쏘지 않음)
+            echo "[k6] Starting S3-only data collection load test..."
+            k6 run /scripts/load-test.js --out json=result.json
+
+            # 3. 테스트 종료 후 메타데이터 추출 (계정ID 및 시간)
             ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
             RUN_DATE=$(date -u +"%Y-%m-%d")
             RUN_ID="job-$(date -u +"%H%M%S")"
@@ -76,16 +38,22 @@ spec:
             S3_PATH="s3://${BUCKET_NAME}/k6/raw/run_date=${RUN_DATE}/run_id=${RUN_ID}/result.json"
             aws s3 cp result.json ${S3_PATH}
             
+            # 4. Athena에 파티션 등록
             echo "[k6] Registering partition in Athena..."
             aws athena start-query-execution \
               --query-string "ALTER TABLE y2ks_analytics.k6_raw ADD IF NOT EXISTS PARTITION (run_date='${RUN_DATE}', run_id='${RUN_ID}') LOCATION 's3://${BUCKET_NAME}/k6/raw/run_date=${RUN_DATE}/run_id=${RUN_ID}/'" \
               --work-group "y2ks-analytics" \
               --region ap-northeast-2
               
-            echo "[k6] Job Completed Successfully."
+            echo "[k6] Athena Pipeline Completed Successfully."
         env:
         - name: TARGET_URL
           value: "http://y2ks-frontend-svc"
+        - name: AWS_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: aws-config
+              key: AWS_REGION
         resources:
           requests:
             cpu: 500m

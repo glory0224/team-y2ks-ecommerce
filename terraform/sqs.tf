@@ -4,7 +4,7 @@
 # ============================================================
 resource "aws_sqs_queue" "app" {
   name                       = "y2ks-queue"
-  message_retention_seconds  = 86400  # 1일
+  message_retention_seconds  = 86400 # 1일
   visibility_timeout_seconds = 30
   sqs_managed_sse_enabled    = true
 }
