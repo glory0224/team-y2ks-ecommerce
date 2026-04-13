@@ -1,0 +1,143 @@
+{
+  "title": "k6 Load Test",
+  "uid": "y2ks-k6",
+  "schemaVersion": 38,
+  "version": 5,
+  "refresh": "10s",
+  "time": { "from": "now-30m", "to": "now" },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Virtual Users (VU)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" } }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "k6_vus",
+          "legendFormat": "Active VUs",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "k6_vus_max",
+          "legendFormat": "Max VUs",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "HTTP Request Rate (req/s)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "rate(k6_http_reqs_total[30s])",
+          "legendFormat": "req/s",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "rate(k6_http_req_failed_total[30s])",
+          "legendFormat": "failed/s",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Response Time Percentiles (ms)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "ms" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "max(k6_http_req_duration_p50{name=\"claim\"})",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "max(k6_http_req_duration_p95{name=\"claim\"})",
+          "legendFormat": "p95",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "max(k6_http_req_duration_p99{name=\"claim\"})",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Claim Success / Fail Rate",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "sum(rate(k6_http_reqs_total{name=\"claim\",expected_response=\"true\"}[30s]))",
+          "legendFormat": "success/s",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "sum(rate(k6_http_reqs_total{name=\"claim\",expected_response=\"false\"}[30s]))",
+          "legendFormat": "fail/s",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "SQS Queue Depth during Load Test",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "max(keda_scaler_metrics_value{scaler=\"awsSqsQueueScaler\"})",
+          "legendFormat": "Queue Depth",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Worker Replicas during Load Test",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "max(kube_deployment_status_replicas{deployment=\"y2ks-worker\"})",
+          "legendFormat": "Current",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "max(kube_deployment_spec_replicas{deployment=\"y2ks-worker\"})",
+          "legendFormat": "Desired",
+          "refId": "B"
+        }
+      ]
+    }
+  ]
+}
