@@ -31,5 +31,12 @@ output "next_steps" {
 
     [Prometheus remote_write 확인]
     kubectl get prometheus -n monitoring prometheus-kube-prometheus-prometheus -o jsonpath='{.spec.remoteWrite}'
+
+    [k6 부하 테스트]
+    monitoring apply/destroy 시 y2ks-k6-config ConfigMap이 자동으로 생성/삭제됩니다.
+    테스트 실행:
+      kubectl delete job k6-loadtest --ignore-not-found
+      kubectl apply -f k6/job.yaml
+      kubectl logs -f job/k6-loadtest
   EOT
 }

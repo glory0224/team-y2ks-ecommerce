@@ -1,7 +1,7 @@
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
-  name: aws-sqs-queue-scaledobject
+  name: sqs-scaledobject
   namespace: default
 spec:
   scaleTargetRef:
@@ -10,6 +10,8 @@ spec:
   maxReplicaCount: {{ .Values.worker.maxReplicas }}
   triggers:
   - type: aws-sqs-queue
+    authenticationRef:
+      name: keda-aws-credentials
     metadata:
       identityOwner: operator
       queueURL: "https://sqs.{{ .Values.region }}.amazonaws.com/{{ .Values.accountId }}/{{ .Values.queueName }}"
