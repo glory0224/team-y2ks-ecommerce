@@ -16,7 +16,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
-          "expr": "count(karpenter_nodes_allocatable{}) by (nodepool)",
+          "expr": "count(count(karpenter_nodes_allocatable{nodepool!=\"\"}) by (node_name, nodepool)) by (nodepool)",
           "legendFormat": "{{nodepool}}",
           "refId": "A"
         }
