@@ -96,40 +96,8 @@ resource "null_resource" "kubeconfig" {
   ]
 }
 
-# ============================================================
-# Prometheus 설치 (helm CLI 직접 실행)
-# frontend의 admin 메트릭 엔드포인트가 prometheus-server.monitoring:80 참조
-# ============================================================
-resource "null_resource" "install_prometheus" {
-  triggers = {
-    cluster_name = aws_eks_cluster.main.name
-  }
-
-  provisioner "local-exec" {
-    when        = destroy
-    interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
-    command     = "helm uninstall prometheus --namespace monitoring --timeout 2m0s 2>$null; exit 0"
-  }
-
-  provisioner "local-exec" {
-    interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
-    command     = <<-EOT
-      helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-      helm repo update
-      helm uninstall prometheus --namespace monitoring 2>$null
-      kubectl delete pvc --all -n monitoring 2>$null
-      Start-Sleep -Seconds 5
-      helm upgrade --install prometheus prometheus-community/prometheus `
-        --namespace monitoring --create-namespace `
-        --set server.persistentVolume.enabled=false `
-        --set alertmanager.enabled=false `
-        --set prometheus-node-exporter.enabled=false `
-        --wait --timeout 5m
-    EOT
-  }
-
-  depends_on = [null_resource.kubeconfig]
-}
+# kube-prometheus-stack (AMP remote_write 포함) 은
+# monitoring/ 디렉토리의 terraform에서 설치됩니다.
 
 # ============================================================
 # KEDA 설치 (helm CLI 직접 실행)
@@ -152,7 +120,10 @@ resource "null_resource" "install_keda" {
       helm repo update
       helm upgrade --install keda kedacore/keda `
         --namespace keda --create-namespace `
-        --version 2.16.0 `
+        --set prometheus.operator.enabled=true `
+        --set prometheus.operator.port=8080 `
+        --set prometheus.metricServer.enabled=true `
+        --set prometheus.metricServer.port=9022 `
         --wait --timeout 5m
     EOT
   }
@@ -269,8 +240,10 @@ resource "null_resource" "install_y2ks" {
       $timeout = 180
       $elapsed = 0
       while ($elapsed -lt $timeout) {
-        $classicElbs = (aws elb describe-load-balancers --query "LoadBalancerDescriptions[?VPCId=='$vpcId'].LoadBalancerName" --output text 2>$null).Trim()
-        $v2Elbs = (aws elbv2 describe-load-balancers --query "LoadBalancers[?VpcId=='$vpcId'].LoadBalancerArn" --output text 2>$null).Trim()
+        $classicElbs = (aws elb describe-load-balancers --query "LoadBalancerDescriptions[?VPCId=='$vpcId'].LoadBalancerName" --output text 2>$null)
+        $v2Elbs = (aws elbv2 describe-load-balancers --query "LoadBalancers[?VpcId=='$vpcId'].LoadBalancerArn" --output text 2>$null)
+        $classicElbs = if ($classicElbs) { $classicElbs.Trim() } else { "" }
+        $v2Elbs = if ($v2Elbs) { $v2Elbs.Trim() } else { "" }
         if ([string]::IsNullOrEmpty($classicElbs) -and [string]::IsNullOrEmpty($v2Elbs)) { Write-Host "ELB 삭제 완료 확인"; break }
         Write-Host "ELB 삭제 대기 중... ($elapsed s)"
         Start-Sleep -Seconds 10
@@ -300,5 +273,5 @@ resource "null_resource" "install_y2ks" {
     EOT
   }
 
-  depends_on = [null_resource.service_accounts, null_resource.install_karpenter, null_resource.install_prometheus, null_resource.build_and_push_images]
+  depends_on = [null_resource.service_accounts, null_resource.install_karpenter, null_resource.build_and_push_images]
 }

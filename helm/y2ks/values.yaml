@@ -23,4 +23,4 @@ images:
 worker:
   minReplicas: 1
   maxReplicas: 50
-  queueLength: "5"
+  queueLength: "10"
