@@ -1,0 +1,34 @@
+# Redis PDB: 선착순 카운터 유실 방지 — 항상 1개 이상 Running 보장
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: redis-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: redis
+---
+# Frontend-1 PDB: 트래픽 입구 보호
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: frontend-1-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: frontend
+      instance: frontend-1
+---
+# Frontend-2 PDB: 트래픽 입구 보호
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: frontend-2-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: frontend
+      instance: frontend-2
