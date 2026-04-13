@@ -85,6 +85,25 @@ resource "aws_iam_role_policy_attachment" "worker_dynamodb" {
   policy_arn = aws_iam_policy.worker_dynamodb.arn
 }
 
+resource "aws_iam_role_policy" "worker_amp" {
+  name = "Y2ksWorkerAMPPolicy"
+  role = aws_iam_role.worker.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "aps:RemoteWrite",
+        "aps:GetSeries",
+        "aps:GetLabels",
+        "aps:GetMetricMetadata"
+      ]
+      Resource = "*"
+    }]
+  })
+}
+
 # ============================================================
 # KEDA Operator IAM
 # 기존: keda-operator-trust-policy.json + AWS CLI
@@ -111,9 +130,21 @@ resource "aws_iam_role" "keda_operator" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "keda_kinesis" {
-  role       = aws_iam_role.keda_operator.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonKinesisReadOnlyAccess"
+resource "aws_iam_role_policy" "keda_sqs" {
+  name = "KedaSQSPolicy"
+  role = aws_iam_role.keda_operator.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl"
+      ]
+      Resource = "arn:aws:sqs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:y2ks-queue"
+    }]
+  })
 }
 
 # ============================================================

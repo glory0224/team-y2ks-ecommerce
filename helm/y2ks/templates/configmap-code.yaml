@@ -17,7 +17,6 @@ data:
     )
 
     REDIS_HOST = os.environ.get('REDIS_HOST', 'redis-service')
-    PROMETHEUS_URL = os.environ.get('PROMETHEUS_URL', 'http://prometheus-service:9090')
     AWS_REGION = os.environ.get('AWS_REGION', 'ap-northeast-2')
     QUEUE_URL = os.environ.get('SQS_QUEUE_URL', '')
     DDB_TABLE = os.environ.get('DDB_TABLE', 'y2ks-coupon-claims')
@@ -168,62 +167,6 @@ data:
             return jsonify({'items': items[start:start+limit], 'total': total, 'page': page, 'limit': limit, 'pages': pages})
         except Exception as e:
             return jsonify({'items': [], 'total': 0, 'page': 1, 'limit': 20, 'pages': 1, 'error': str(e)})
-
-    @app.route('/api/admin/metrics')
-    def admin_metrics():
-        query = request.args.get('query', '')
-        start = request.args.get('start', '')
-        end = request.args.get('end', '')
-        step = request.args.get('step', '15s')
-        try:
-            resp = http_requests.get(
-                f'{PROMETHEUS_URL}/api/v1/query_range',
-                params={'query': query, 'start': start, 'end': end, 'step': step},
-                timeout=10
-            )
-            return jsonify(resp.json()), resp.status_code
-        except Exception:
-            return jsonify({'error': 'prometheus unavailable'}), 503
-
-    @app.route('/api/admin/metrics/instant')
-    def admin_metrics_instant():
-        query = request.args.get('query', '')
-        try:
-            resp = http_requests.get(
-                f'{PROMETHEUS_URL}/api/v1/query',
-                params={'query': query},
-                timeout=10
-            )
-            return jsonify(resp.json()), resp.status_code
-        except Exception:
-            return jsonify({'error': 'prometheus unavailable'}), 503
-
-    @app.route('/api/admin/k8s')
-    def admin_k8s():
-        try:
-            token = open('/var/run/secrets/kubernetes.io/serviceaccount/token').read().strip()
-            ns = open('/var/run/secrets/kubernetes.io/serviceaccount/namespace').read().strip()
-            ca = '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
-            host = os.environ.get('KUBERNETES_SERVICE_HOST', 'kubernetes.default.svc')
-            port = os.environ.get('KUBERNETES_SERVICE_PORT', '443')
-            base = f'https://{host}:{port}'
-            hdrs = {'Authorization': f'Bearer {token}', 'Accept': 'application/json'}
-            pr = http_requests.get(f'{base}/api/v1/namespaces/{ns}/pods?labelSelector=app%3Dworker', headers=hdrs, verify=ca, timeout=5)
-            pods_list = pr.json().get('items', [])
-            worker_running = sum(1 for p in pods_list if p.get('status', {}).get('phase') == 'Running')
-            nr = http_requests.get(f'{base}/api/v1/nodes', headers=hdrs, verify=ca, timeout=5)
-            ready_nodes = spot_nodes = 0
-            for node in nr.json().get('items', []):
-                conds = node.get('status', {}).get('conditions', [])
-                if any(c.get('type') == 'Ready' and c.get('status') == 'True' for c in conds):
-                    ready_nodes += 1
-                    if node.get('metadata', {}).get('labels', {}).get('karpenter.sh/capacity-type') == 'spot':
-                        spot_nodes += 1
-            dr = http_requests.get(f'{base}/apis/apps/v1/namespaces/{ns}/deployments/y2ks-worker', headers=hdrs, verify=ca, timeout=5)
-            desired = dr.json().get('spec', {}).get('replicas', 1)
-            return jsonify({'worker_pods': worker_running, 'worker_desired': desired, 'nodes_ready': ready_nodes, 'nodes_spot': spot_nodes})
-        except Exception as e:
-            return jsonify({'error': str(e), 'worker_pods': 0, 'worker_desired': 0, 'nodes_ready': 0, 'nodes_spot': 0})
 
     @app.route('/api/admin/reset', methods=['POST'])
     def admin_reset():

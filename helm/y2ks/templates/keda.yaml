@@ -1,7 +1,7 @@
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
-  name: aws-kinesis-stream-scaledobject
+  name: sqs-scaledobject
   namespace: default
 spec:
   scaleTargetRef:
@@ -9,11 +9,13 @@ spec:
   minReplicaCount: {{ .Values.worker.minReplicas }}
   maxReplicaCount: {{ .Values.worker.maxReplicas }}
   triggers:
-  - type: aws-kinesis-stream
+  - type: aws-sqs-queue
+    authenticationRef:
+      name: keda-aws-credentials
     metadata:
       identityOwner: operator
-      streamName: "{{ .Values.kinesisStreamName }}"
-      shardCount: "{{ .Values.worker.shardCount }}"
+      queueURL: "https://sqs.{{ .Values.region }}.amazonaws.com/{{ .Values.accountId }}/{{ .Values.queueName }}"
+      queueLength: "{{ .Values.worker.queueLength }}"
       awsRegion: "{{ .Values.region }}"
 ---
 apiVersion: keda.sh/v1alpha1

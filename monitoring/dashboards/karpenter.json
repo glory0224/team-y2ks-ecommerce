@@ -2,7 +2,7 @@
   "title": "Karpenter Node Autoscaling",
   "uid": "y2ks-karpenter",
   "schemaVersion": 38,
-  "version": 3,
+  "version": 4,
   "refresh": "30s",
   "time": { "from": "now-1h", "to": "now" },
   "templating": { "list": [] },
@@ -69,16 +69,25 @@
     },
     {
       "id": 4,
-      "title": "Karpenter - Node Launch Duration (p99)",
+      "title": "Karpenter - Node Provisioning Duration (p99)",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "s" }
+      },
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
-          "expr": "histogram_quantile(0.99, sum(rate(karpenter_nodeclaims_total_time_to_ready_seconds_bucket[5m])) by (le))",
-          "legendFormat": "p99 launch time",
+          "expr": "histogram_quantile(0.99, sum(rate(karpenter_cloudprovider_duration_seconds_bucket{action=\"create\"}[5m])) by (le))",
+          "legendFormat": "p99 cloud provider (node create)",
           "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "AMP-y2ks" },
+          "expr": "histogram_quantile(0.99, sum(rate(karpenter_pods_provisioning_startup_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p99 pod startup",
+          "refId": "B"
         }
       ]
     },
