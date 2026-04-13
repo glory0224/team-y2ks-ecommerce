@@ -13,6 +13,8 @@ spec:
         app: k6-loadtest
     spec:
       serviceAccountName: worker-sa
+      securityContext:
+        runAsUser: 0
       restartPolicy: Never
       priorityClassName: y2ks-high
       containers:
@@ -41,6 +43,8 @@ spec:
             cpu: 200m
             memory: 128Mi
       - name: k6
+        securityContext:
+          runAsUser: 0
         image: grafana/k6:latest
         command: ["/bin/sh", "-c"]
         args:

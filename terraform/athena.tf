@@ -9,8 +9,8 @@ resource "aws_athena_workgroup" "analytics" {
       output_location = "s3://${aws_s3_bucket.athena.bucket}/athena-results/"
     }
 
-    # 스캔 제한 100MB (100 * 1024 * 1024)
-    bytes_scanned_cutoff_per_query = 104857600
+    # 스캔 제한 1GB (1GB * 1024 * 1024 * 1024)
+    bytes_scanned_cutoff_per_query = 1073741824
   }
 }
 
