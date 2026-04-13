@@ -79,7 +79,7 @@ resource "null_resource" "prometheus_stack" {
       $values = $values -replace "__AMP_ROLE_ARN__", "${aws_iam_role.amp_ingest.arn}"
       $values = $values -replace "__AMP_ENDPOINT__", "${aws_prometheus_workspace.main.prometheus_endpoint}"
       $tmpFile = [System.IO.Path]::GetTempFileName() + ".yaml"
-      $values | Set-Content $tmpFile -Encoding UTF8
+      [System.IO.File]::WriteAllText($tmpFile, $values, (New-Object System.Text.UTF8Encoding $false))
 
       helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
       helm repo update
