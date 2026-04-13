@@ -41,7 +41,9 @@ KEDA + Karpenter로 트래픽 스파이크를 자동 대응합니다.
 | SES | 당첨자 쿠폰 이메일 발송 | AWS SES |
 | KEDA | SQS 큐 깊이 기반 Worker 자동 스케일링 (1~50) | KEDA v2 |
 | Karpenter | 부하 시 EC2 Spot 노드 자동 프로비저닝/제거 | Karpenter v1.1.1 |
-| Prometheus | 파드/노드 메트릭 수집 → admin 모니터링 페이지 연동 | prometheus-community/prometheus |
+| kube-prometheus-stack | 파드/노드 메트릭 수집 → AMP remote_write | prometheus-community/kube-prometheus-stack |
+| AMP | Prometheus 메트릭 장기 저장 | AWS Managed Prometheus |
+| AMG | KEDA / Karpenter 대시보드 시각화 | AWS Managed Grafana (IAM Identity Center SSO) |
 
 ---
 
@@ -63,6 +65,15 @@ KEDA + Karpenter로 트래픽 스파이크를 자동 대응합니다.
 │   ├── ecr.tf                  # ECR 리포지토리 + Docker 이미지 빌드/푸시 자동화
 │   └── outputs.tf              # 배포 후 참조값 출력 + next_steps 안내
 │
+├── monitoring/                 # 모니터링 인프라 (별도 Terraform state)
+│   ├── main.tf                 # S3 backend, provider, terraform_remote_state
+│   ├── amp.tf                  # AMP workspace + IRSA + kube-prometheus-stack 설치
+│   ├── amg.tf                  # AMG workspace + AMP datasource + 사용자 권한
+│   ├── dashboards.tf           # KEDA / Karpenter Grafana 대시보드 프로비저닝
+│   ├── prometheus-values.yaml  # kube-prometheus-stack Helm values
+│   ├── variables.tf
+│   └── outputs.tf
+│
 └── helm/y2ks/                  # Y2KS 앱 Helm 차트
     ├── Chart.yaml
     ├── values.yaml             # 변수 정의 (terraform apply 시 자동 주입)
@@ -70,12 +81,17 @@ KEDA + Karpenter로 트래픽 스파이크를 자동 대응합니다.
         ├── aws-config.yaml     # AWS 설정 ConfigMap (SQS URL, Region, DDB 테이블)
         ├── configmap-code.yaml # Python 코드 (app.py, worker.py)
         ├── configmap-html.yaml # HTML 페이지 (main, event, admin)
+        ├── configmap-k6.yaml   # k6 부하 테스트 스크립트
         ├── frontend.yaml       # Frontend Deployment + LoadBalancer Service
-        ├── worker.yaml         # Worker Deployment
+        ├── cart.yaml           # 장바구니 Deployment
+        ├── payment.yaml        # 결제 Deployment
+        ├── product.yaml        # 상품 Deployment
+        ├── worker.yaml         # Worker Deployment (KEDA 스케일 대상)
         ├── redis.yaml          # Redis Deployment + Service
         ├── keda.yaml           # KEDA ScaledObject + TriggerAuthentication
         ├── karpenter.yaml      # Karpenter EC2NodeClass + NodePool
         ├── priority-classes.yaml
+        ├── pdb.yaml            # PodDisruptionBudget
         └── rbac.yaml
 ```
 
@@ -234,8 +250,8 @@ terraform destroy
 | DynamoDB 테이블 | y2ks-coupon-claims |
 | KEDA 스케일 범위 | Worker 1 ~ 50개 |
 | KEDA 트리거 | 메시지 5개당 Worker 1개 |
-| 기본 노드그룹 | system-nodes t3.small × 2 (시스템·앱 파드 공용) |
-| Karpenter 인스턴스 | t3.small (Spot + On-demand) |
+| 기본 노드그룹 | system-nodes t3.medium × 2 (시스템·앱·모니터링 파드 공용) |
+| Karpenter 인스턴스 | 4 vCPU 미만 (Spot + On-demand, CPU 총 20코어 한도) |
 | 발신 이메일 | wooseoyun@naver.com |
 
 ---

@@ -63,7 +63,7 @@ locals {
   # 현재 실행 중인 IAM 유저의 이름 추출 (예: user02)
   # ARN이 'arn:aws:iam::123456789012:user/user02' 형식일 때 마지막 부분을 가져옴
   current_session_user = element(split("/", data.aws_caller_identity.current.arn), length(split("/", data.aws_caller_identity.current.arn)) - 1)
-  
+
   # 팀원 목록에서 현재 실행 중인 유저를 제외 (중복 방지)
   filtered_team_members = toset([for u in var.team_member_usernames : u if u != local.current_session_user])
 }
@@ -110,7 +110,7 @@ resource "aws_eks_node_group" "standard" {
   node_group_name = "system-nodes"
   node_role_arn   = aws_iam_role.node_group.arn
   subnet_ids      = aws_subnet.public[*].id
-  instance_types  = ["t3.small"]
+  instance_types  = ["t3.medium"]
 
   scaling_config {
     desired_size = 2

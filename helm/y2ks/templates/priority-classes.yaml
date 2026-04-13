@@ -21,3 +21,11 @@ metadata:
 value: 1000
 globalDefault: true
 description: "KEDA Worker - 이벤트 처리용, 리소스 부족 시 선점 허용"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: y2ks-low
+value: 100
+globalDefault: false
+description: "Cart/Payment/Product - Worker 선점 대상, 스팟 한계 시 ondemand 자리 양보"

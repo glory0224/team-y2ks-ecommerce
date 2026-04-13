@@ -52,7 +52,7 @@ output "karpenter_node_role_arn" {
 # ============================================================
 output "next_steps" {
   description = "terraform apply 완료 후 실행 순서"
-  value = <<-EOT
+  value       = <<-EOT
     [terraform apply 한 번으로 자동 완료]
     - VPC / EKS / IAM 생성
     - DynamoDB 테이블 생성 (y2ks-coupon-claims)
