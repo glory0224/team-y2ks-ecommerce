@@ -21,6 +21,7 @@ prometheus:
     storageSpec:
       volumeClaimTemplate:
         spec:
+          storageClassName: gp2-csi
           accessModes: ["ReadWriteOnce"]
           resources:
             requests:
@@ -31,6 +32,14 @@ prometheus:
 grafana:
   enabled: true
   adminPassword: ""  # terraform apply 시 --set grafana.adminPassword 로 자동 주입
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: node-type
+            operator: In
+            values: ["ondemand-2"]
   service:
     type: LoadBalancer
   resources:
@@ -49,6 +58,14 @@ grafana:
 
 alertmanager:
   alertmanagerSpec:
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: node-type
+              operator: In
+              values: ["ondemand-1", "ondemand-2"]
     resources:
       requests:
         cpu: 50m
@@ -58,6 +75,14 @@ alertmanager:
         memory: 128Mi
 
 prometheusOperator:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: node-type
+            operator: In
+            values: ["ondemand-1", "ondemand-2"]
   admissionWebhooks:
     enabled: false
     patch:
