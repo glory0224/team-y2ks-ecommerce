@@ -32,8 +32,8 @@ spec:
         resources:
           requests:
             # 크게 잡아 Worker가 들어올 공간을 확보하도록 설계
-            cpu: 500m
-            memory: 500Mi
+            cpu: 200m
+            memory: 200Mi
           limits:
             cpu: 600m
             memory: 600Mi
