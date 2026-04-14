@@ -1,5 +1,6 @@
 resource "aws_athena_workgroup" "analytics" {
-  name = "y2ks-analytics"
+  name          = "y2ks-analytics"
+  force_destroy = true
 
   configuration {
     enforce_workgroup_configuration    = true

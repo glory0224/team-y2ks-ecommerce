@@ -1,0 +1,32 @@
+{
+  "title": "k6 Load Test",
+  "uid": "k6-y2ks",
+  "schemaVersion": 36,
+  "time": {"from": "now-1h", "to": "now"},
+  "refresh": "10s",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "HTTP Request Rate",
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum(rate(k6_http_reqs_total[1m]))", "legendFormat": "req/s"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Response Duration p95",
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum(rate(k6_http_req_duration_seconds_bucket[1m])) by (le))", "legendFormat": "p95"},
+        {"expr": "histogram_quantile(0.50, sum(rate(k6_http_req_duration_seconds_bucket[1m])) by (le))", "legendFormat": "p50"}
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Active VUs",
+      "gridPos": {"x": 0, "y": 8, "w": 8, "h": 4},
+      "targets": [{"expr": "k6_vus"}]
+    }
+  ]
+}

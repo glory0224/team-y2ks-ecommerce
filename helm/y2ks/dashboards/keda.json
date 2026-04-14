@@ -1,0 +1,30 @@
+{
+  "title": "KEDA ScaledObject",
+  "uid": "keda-y2ks",
+  "schemaVersion": 36,
+  "time": {"from": "now-1h", "to": "now"},
+  "refresh": "30s",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Worker Replica Count",
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "keda_scaler_metrics_value{scaledObject=\"sqs-scaledobject\"}", "legendFormat": "SQS Queue Depth"},
+        {"expr": "kube_deployment_status_replicas{deployment=\"y2ks-worker\"}", "legendFormat": "Worker Replicas"}
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Current Worker Replicas",
+      "gridPos": {"x": 12, "y": 0, "w": 6, "h": 4},
+      "targets": [{"expr": "kube_deployment_status_replicas{deployment=\"y2ks-worker\"}"}]
+    },
+    {
+      "type": "stat",
+      "title": "SQS Queue Depth",
+      "gridPos": {"x": 18, "y": 0, "w": 6, "h": 4},
+      "targets": [{"expr": "keda_scaler_metrics_value{scaledObject=\"sqs-scaledobject\"}"}]
+    }
+  ]
+}
