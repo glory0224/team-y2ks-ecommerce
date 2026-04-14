@@ -91,8 +91,7 @@ KEDA + Karpenter로 트래픽 스파이크를 자동 대응합니다.
         ├── keda.yaml           # KEDA ScaledObject + TriggerAuthentication
         ├── karpenter.yaml      # Karpenter EC2NodeClass + NodePool
         ├── priority-classes.yaml
-        ├── pdb.yaml            # PodDisruptionBudget
-        └── rbac.yaml
+        └── pdb.yaml            # PodDisruptionBudget (Redis, Frontend)
 ```
 
 ---
@@ -250,8 +249,10 @@ terraform destroy
 | DynamoDB 테이블 | y2ks-coupon-claims |
 | KEDA 스케일 범위 | Worker 1 ~ 50개 |
 | KEDA 트리거 | 메시지 5개당 Worker 1개 |
-| 기본 노드그룹 | system-nodes t3.medium × 2 (시스템·앱·모니터링 파드 공용) |
-| Karpenter 인스턴스 | 4 vCPU 미만 (Spot + On-demand, CPU 총 20코어 한도) |
+| Worker 리소스 | cpu request 500m / memory request 400Mi |
+| 온디맨드 노드그룹 | ondemand-1 (AZ-a, t3.medium × 1), ondemand-2 (AZ-b, t3.medium × 1) |
+| Karpenter 인스턴스 | 4 vCPU 미만 (Spot 전용, CPU 총 20코어 한도) |
+| Karpenter consolidation | 10분 후 통합 (시연 중 노드 갑작스러운 삭제 방지) |
 | 발신 이메일 | wooseoyun@naver.com |
 
 ---
@@ -263,6 +264,7 @@ terraform destroy
 | `y2ks-critical` | 100,000 | Redis | 절대 선점 불가 |
 | `y2ks-high` | 10,000 | Frontend | 트래픽 스파이크 시에도 항상 보장 |
 | `y2ks-normal` | 1,000 | Worker | 리소스 부족 시 선점 허용 |
+| `y2ks-low` | 100 | Cart / Payment / Product | Karpenter 한도 초과 시 Worker에게 자리 양보 |
 
 ---
 
