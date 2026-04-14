@@ -21,7 +21,7 @@ prometheus:
 
 grafana:
   enabled: true
-  adminPassword: "GRAFANA_PASSWORD_PLACEHOLDER"
+  adminPassword: ""  # terraform apply 시 --set grafana.adminPassword 로 자동 주입
   service:
     type: LoadBalancer
   resources:

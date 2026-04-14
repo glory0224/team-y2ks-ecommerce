@@ -102,8 +102,9 @@ resource "null_resource" "kubeconfig" {
 # ============================================================
 resource "null_resource" "install_prometheus" {
   triggers = {
-    cluster_name = aws_eks_cluster.main.name
-    values_hash  = filesha256("${path.module}/../helm/y2ks/prometheus-values.yaml")
+    cluster_name    = aws_eks_cluster.main.name
+    values_hash     = filesha256("${path.module}/../helm/y2ks/prometheus-values.yaml")
+    grafana_pw_hash = sha256(var.grafana_admin_password)
   }
 
   # ── destroy: helm 제거 + 보안그룹 규칙 삭제 ──────────────────
@@ -147,7 +148,7 @@ resource "null_resource" "install_prometheus" {
     EOT
   }
 
-  # ── apply: helm 설치 + 보안그룹 규칙 추가 + ServiceMonitor/대시보드 ──
+  # ── apply: helm 설치 + 보안그룹 규칙 추가 ──────────────────────
   provisioner "local-exec" {
     interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
     command     = <<-EOT
@@ -167,21 +168,44 @@ resource "null_resource" "install_prometheus" {
       Write-Host "[OK] kube-prometheus-stack 설치 완료"
 
       # ── 2. 보안그룹 규칙: ELB SG → 노드 SG NodePort 허용 ────
-      # ELB 보안그룹 ID (k8s-elb-* 패턴, prometheus-grafana LoadBalancer용)
-      Start-Sleep -Seconds 15  # ELB SG 생성 대기
-      $elbSg = aws ec2 describe-security-groups `
-        --filters "Name=tag:kubernetes.io/cluster/${var.cluster_name},Values=owned" `
-                  "Name=group-name,Values=k8s-elb-*" `
-        --query "SecurityGroups[0].GroupId" --output text --region ${var.aws_region}
-
-      # 노드 보안그룹 ID (eks-cluster-sg-* 패턴)
+      # Grafana LoadBalancer의 ELB SG가 생성될 때까지 폴링 (최대 3분)
+      # ELB SG 이름 패턴: k8s-elb-* (Classic LB) 또는 k8s-*-* (NLB/ALB)
       $nodeSg = aws ec2 describe-security-groups `
         --filters "Name=tag:kubernetes.io/cluster/${var.cluster_name},Values=owned" `
                   "Name=group-name,Values=eks-cluster-sg-*" `
         --query "SecurityGroups[0].GroupId" --output text --region ${var.aws_region}
 
-      if ($elbSg -and $elbSg -ne "None" -and $nodeSg -and $nodeSg -ne "None") {
-        # 이미 존재하는 규칙인지 확인
+      if (-not $nodeSg -or $nodeSg -eq "None") {
+        throw "[ERROR] 노드 보안그룹을 찾을 수 없습니다"
+      }
+      Write-Host "[OK] 노드 보안그룹: $nodeSg"
+
+      $elbSg = $null
+      $elapsed = 0
+      $maxWait = 180
+      Write-Host "ELB 보안그룹 생성 대기 중..."
+      while ($elapsed -lt $maxWait) {
+        # Classic LB (k8s-elb-*) 와 NLB/ALB (k8s-*) 패턴 모두 시도
+        $elbSg = aws ec2 describe-security-groups `
+          --filters "Name=tag:kubernetes.io/cluster/${var.cluster_name},Values=owned" `
+                    "Name=group-name,Values=k8s-elb-*" `
+          --query "SecurityGroups[0].GroupId" --output text --region ${var.aws_region} 2>$null
+        if (-not $elbSg -or $elbSg -eq "None") {
+          $elbSg = aws ec2 describe-security-groups `
+            --filters "Name=tag:kubernetes.io/cluster/${var.cluster_name},Values=owned" `
+                      "Name=tag:kubernetes.io/service-name,Values=monitoring/prometheus-grafana" `
+            --query "SecurityGroups[0].GroupId" --output text --region ${var.aws_region} 2>$null
+        }
+        if ($elbSg -and $elbSg -ne "None") {
+          Write-Host "[OK] ELB 보안그룹 발견: $elbSg ($elapsed 초 경과)"
+          break
+        }
+        Start-Sleep -Seconds 10
+        $elapsed += 10
+        Write-Host "  대기 중... ($elapsed/$maxWait 초)"
+      }
+
+      if ($elbSg -and $elbSg -ne "None") {
         $existing = aws ec2 describe-security-group-rules `
           --filters "Name=group-id,Values=$nodeSg" `
           --query "SecurityGroupRules[?FromPort==``30000`` && IsEgress==``false``].SecurityGroupRuleId" `
@@ -197,44 +221,61 @@ resource "null_resource" "install_prometheus" {
           Write-Host "[SKIP] 보안그룹 규칙 이미 존재"
         }
       } else {
-        Write-Host "[WARN] 보안그룹 자동 설정 실패 — ELB SG: $elbSg, Node SG: $nodeSg"
+        Write-Host "[WARN] ELB 보안그룹을 찾지 못했습니다 — NodePort 규칙 수동 확인 필요"
+      }
+    EOT
+  }
+
+  depends_on = [null_resource.kubeconfig]
+}
+
+# ============================================================
+# ServiceMonitor + Grafana 대시보드 ConfigMap 적용
+# KEDA, Karpenter 설치 완료 후 실행해야 namespace가 존재함
+# ============================================================
+resource "null_resource" "apply_monitoring_manifests" {
+  triggers = {
+    cluster_name     = aws_eks_cluster.main.name
+    values_hash      = filesha256("${path.module}/../helm/y2ks/prometheus-values.yaml")
+    dashboards_hash  = sha256(join("", [
+      filesha256("${path.module}/../helm/y2ks/dashboards/keda.json"),
+      filesha256("${path.module}/../helm/y2ks/dashboards/karpenter.json"),
+      filesha256("${path.module}/../helm/y2ks/dashboards/k6.json"),
+    ]))
+  }
+
+  provisioner "local-exec" {
+    interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
+    command     = <<-EOT
+      $ErrorActionPreference = "Stop"
+      aws eks update-kubeconfig --name ${var.cluster_name} --region ${var.aws_region}
+
+      $dashboardsDir = "${path.module}/../helm/y2ks/dashboards"
+
+      # ── 대시보드 ConfigMap 생성 (JSON 파일을 직접 읽어서 적용) ──
+      foreach ($name in @("keda", "karpenter", "k6")) {
+        $jsonContent = Get-Content "$dashboardsDir/$name.json" -Raw -Encoding UTF8
+        $cm = @"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-$name
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  $name.json: |
+$(($jsonContent -split "`n" | ForEach-Object { "    $_" }) -join "`n")
+"@
+        $f = [System.IO.Path]::GetTempFileName() + ".yaml"
+        [System.IO.File]::WriteAllText($f, $cm, [System.Text.Encoding]::UTF8)
+        kubectl apply -f $f
+        Remove-Item $f -ErrorAction SilentlyContinue
+        Write-Host "[OK] ConfigMap grafana-dashboard-$name 적용"
       }
 
-      # ── 3. ServiceMonitor + 대시보드 ConfigMap ───────────────
-      $manifests = @"
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: grafana-dashboard-keda
-  namespace: monitoring
-  labels:
-    grafana_dashboard: "1"
-data:
-  keda.json: |
-    {"title":"KEDA ScaledObject","uid":"keda-y2ks","schemaVersion":36,"panels":[{"type":"timeseries","title":"Worker Replica Count","gridPos":{"x":0,"y":0,"w":12,"h":8},"targets":[{"expr":"keda_scaler_metrics_value{scaledObject=\"sqs-scaledobject\"}","legendFormat":"SQS Queue Depth"},{"expr":"kube_deployment_status_replicas{deployment=\"y2ks-worker\"}","legendFormat":"Worker Replicas"}]},{"type":"stat","title":"Current Worker Replicas","gridPos":{"x":12,"y":0,"w":6,"h":4},"targets":[{"expr":"kube_deployment_status_replicas{deployment=\"y2ks-worker\"}"}]},{"type":"stat","title":"SQS Queue Depth","gridPos":{"x":18,"y":0,"w":6,"h":4},"targets":[{"expr":"keda_scaler_metrics_value{scaledObject=\"sqs-scaledobject\"}"}]}],"time":{"from":"now-1h","to":"now"},"refresh":"30s"}
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: grafana-dashboard-karpenter
-  namespace: monitoring
-  labels:
-    grafana_dashboard: "1"
-data:
-  karpenter.json: |
-    {"title":"Karpenter Node Provisioning","uid":"karpenter-y2ks","schemaVersion":36,"panels":[{"type":"timeseries","title":"Nodes Provisioned","gridPos":{"x":0,"y":0,"w":12,"h":8},"targets":[{"expr":"karpenter_nodes_total","legendFormat":"Total Nodes"},{"expr":"karpenter_nodes_allocatable{resource=\"cpu\"}","legendFormat":"Allocatable CPU"}]},{"type":"timeseries","title":"Pod Scheduling Latency","gridPos":{"x":12,"y":0,"w":12,"h":8},"targets":[{"expr":"histogram_quantile(0.99, sum(rate(karpenter_pods_startup_duration_seconds_bucket[5m])) by (le))","legendFormat":"p99"},{"expr":"histogram_quantile(0.50, sum(rate(karpenter_pods_startup_duration_seconds_bucket[5m])) by (le))","legendFormat":"p50"}]}],"time":{"from":"now-1h","to":"now"},"refresh":"30s"}
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: grafana-dashboard-k6
-  namespace: monitoring
-  labels:
-    grafana_dashboard: "1"
-data:
-  k6.json: |
-    {"title":"k6 Load Test","uid":"k6-y2ks","schemaVersion":36,"panels":[{"type":"timeseries","title":"HTTP Request Rate","gridPos":{"x":0,"y":0,"w":12,"h":8},"targets":[{"expr":"sum(rate(k6_http_reqs_total[1m]))","legendFormat":"req/s"}]},{"type":"timeseries","title":"Response Duration p95","gridPos":{"x":12,"y":0,"w":12,"h":8},"targets":[{"expr":"histogram_quantile(0.95, sum(rate(k6_http_req_duration_seconds_bucket[1m])) by (le))","legendFormat":"p95"},{"expr":"histogram_quantile(0.50, sum(rate(k6_http_req_duration_seconds_bucket[1m])) by (le))","legendFormat":"p50"}]},{"type":"stat","title":"Active VUs","gridPos":{"x":0,"y":8,"w":8,"h":4},"targets":[{"expr":"k6_vus"}]}],"time":{"from":"now-1h","to":"now"},"refresh":"10s"}
+      # ── ServiceMonitor 적용 ──────────────────────────────────
+      $sm = @'
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
@@ -273,16 +314,21 @@ spec:
     - port: http-metrics
       interval: 30s
       path: /metrics
-"@
+'@
       $f = [System.IO.Path]::GetTempFileName() + ".yaml"
-      [System.IO.File]::WriteAllText($f, $manifests, [System.Text.Encoding]::UTF8)
+      [System.IO.File]::WriteAllText($f, $sm, [System.Text.Encoding]::UTF8)
       kubectl apply -f $f
       Remove-Item $f -ErrorAction SilentlyContinue
-      Write-Host "[OK] ServiceMonitor + 대시보드 ConfigMap 적용 완료"
+      Write-Host "[OK] ServiceMonitor 적용 완료"
     EOT
   }
 
-  depends_on = [null_resource.kubeconfig]
+  # KEDA, Karpenter namespace가 존재한 후 실행
+  depends_on = [
+    null_resource.install_prometheus,
+    null_resource.install_keda,
+    null_resource.install_karpenter,
+  ]
 }
 
 # ============================================================
@@ -334,6 +380,12 @@ resource "null_resource" "install_karpenter" {
   provisioner "local-exec" {
     interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
     command     = <<-EOT
+      # Public ECR은 us-east-1 고정 — 토큰 만료 방지를 위해 매번 재인증
+      $token = aws ecr-public get-login-password --region us-east-1
+      helm registry login --username AWS --password $token public.ecr.aws
+      if ($LASTEXITCODE -ne 0) { throw "Public ECR 로그인 실패" }
+      Write-Host "[OK] Public ECR 로그인 완료"
+
       helm upgrade --install karpenter oci://public.ecr.aws/karpenter/karpenter `
         --version 1.1.1 `
         --namespace karpenter --create-namespace `
@@ -459,5 +511,5 @@ resource "null_resource" "install_y2ks" {
     EOT
   }
 
-  depends_on = [null_resource.service_accounts, null_resource.install_karpenter, null_resource.build_and_push_images, null_resource.install_prometheus]
+  depends_on = [null_resource.service_accounts, null_resource.install_karpenter, null_resource.build_and_push_images, null_resource.apply_monitoring_manifests]
 }
