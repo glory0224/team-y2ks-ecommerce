@@ -15,11 +15,11 @@
     },
     {
       "type": "timeseries",
-      "title": "Response Duration p95",
+      "title": "Response Duration",
       "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
       "targets": [
-        {"expr": "histogram_quantile(0.95, sum(rate(k6_http_req_duration_seconds_bucket[1m])) by (le))", "legendFormat": "p95"},
-        {"expr": "histogram_quantile(0.50, sum(rate(k6_http_req_duration_seconds_bucket[1m])) by (le))", "legendFormat": "p50"}
+        {"expr": "k6_http_req_duration_p95", "legendFormat": "p95"},
+        {"expr": "k6_http_req_duration_p50", "legendFormat": "p50"}
       ]
     },
     {

@@ -15,20 +15,31 @@ spec:
       serviceAccountName: worker-sa
       restartPolicy: Never
       priorityClassName: y2ks-high
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-type
+                operator: In
+                values: ["ondemand-1", "ondemand-2"]
       containers:
       - name: k6
         image: grafana/k6:latest
         command: ["/bin/sh", "-c"]
         args:
           - |
-            echo "[k6] stdout mode (self-hosted Prometheus — push gateway 불필요)"
-            k6 run /scripts/load-test.js
+            k6 run --out experimental-prometheus-rw /scripts/load-test.js
         env:
         - name: TARGET_URL
           value: "http://y2ks-frontend-svc"
+        - name: K6_PROMETHEUS_RW_SERVER_URL
+          value: "http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090/api/v1/write"
+        - name: K6_PROMETHEUS_RW_TREND_STATS
+          value: "p(50),p(95),p(99)"
         resources:
           requests:
-            cpu: 500m
+            cpu: 300m
             memory: 512Mi
           limits:
             cpu: "2"

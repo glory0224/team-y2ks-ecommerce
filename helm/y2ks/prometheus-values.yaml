@@ -1,5 +1,14 @@
 prometheus:
   prometheusSpec:
+    enableRemoteWriteReceiver: true
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: node-type
+              operator: In
+              values: ["ondemand-1"]
     resources:
       requests:
         cpu: 200m
