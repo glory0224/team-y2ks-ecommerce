@@ -5,7 +5,7 @@ metadata:
 data:
   app.py: |
     from flask import Flask, jsonify, request
-    import boto3, redis, uuid, json, os, random, string, requests as http_requests
+    import boto3, redis, json, os, random, string, hashlib
     from prometheus_flask_exporter import PrometheusMetrics
 
     app = Flask(__name__)
@@ -20,18 +20,13 @@ data:
     AWS_REGION = os.environ.get('AWS_REGION', 'ap-northeast-2')
     QUEUE_URL = os.environ.get('SQS_QUEUE_URL', '')
     DDB_TABLE = os.environ.get('DDB_TABLE', 'y2ks-coupon-claims')
-    SENDER_EMAIL = 'wooseoyun@naver.com'
     TICKET_COUNT = int(os.environ.get('TICKET_COUNT', '100'))
 
     r = redis.Redis(host=REDIS_HOST, port=6379, db=0, decode_responses=True)
     sqs_client = boto3.client('sqs', region_name=AWS_REGION)
-    ses_client = boto3.client('ses', region_name=AWS_REGION)
 
-    def gen_coupon():
-        chars = string.ascii_uppercase + string.digits
-        p1 = ''.join(random.choices(chars, k=4))
-        p2 = ''.join(random.choices(chars, k=4))
-        return f'Y2KS-{p1}-{p2}'
+    def hash_password(password):
+        return hashlib.sha256(password.encode()).hexdigest()
 
     MAIN_HTML = open('/app/main.html').read()
     EVENT_HTML = open('/app/event.html').read()
@@ -78,22 +73,58 @@ data:
 
     @app.route('/api/claim', methods=['POST'])
     def claim():
-        request_id = str(uuid.uuid4())
-        r.setex(f'result:{request_id}', 600, 'pending')
+        data = request.get_json() or {}
+        nickname = data.get('nickname', '').strip()
+        password = data.get('password', '').strip()
+        if not nickname or not password:
+            return jsonify({'error': 'invalid_input', 'message': '닉네임과 비밀번호를 입력해주세요.'}), 400
+        # Redis SADD로 중복 참여 차단 (0이면 이미 존재)
+        added = r.sadd('participants', nickname)
+        if added == 0:
+            return jsonify({'error': 'duplicate', 'message': '이미 참여하셨습니다.'}), 409
+        password_hash = hash_password(password)
+        r.setex(f'result:{nickname}', 600, 'pending')
+        r.setex(f'phash:{nickname}', 600, password_hash)
         try:
             sqs_client.send_message(
                 QueueUrl=QUEUE_URL,
-                MessageBody=json.dumps({'request_id': request_id, 'type': 'claim'})
+                MessageBody=json.dumps({'request_id': nickname, 'password_hash': password_hash, 'type': 'claim'})
             )
         except Exception as e:
-            r.delete(f'result:{request_id}')
+            r.srem('participants', nickname)
+            r.delete(f'result:{nickname}')
+            r.delete(f'phash:{nickname}')
             return jsonify({'error': 'queue_unavailable', 'message': str(e)}), 503
-        return jsonify({'request_id': request_id, 'status': 'queued'})
+        return jsonify({'request_id': nickname, 'status': 'queued'})
 
     @app.route('/api/check/<request_id>')
     def check_result(request_id):
         result = r.get(f'result:{request_id}')
         return jsonify({'status': result if result else 'pending'})
+
+    @app.route('/api/result', methods=['POST'])
+    def get_result():
+        data = request.get_json() or {}
+        nickname = data.get('nickname', '').strip()
+        password = data.get('password', '').strip()
+        if not nickname or not password:
+            return jsonify({'success': False, 'message': '닉네임과 비밀번호를 입력해주세요.'}), 400
+        try:
+            ddb = boto3.resource('dynamodb', region_name=AWS_REGION)
+            table = ddb.Table(DDB_TABLE)
+            resp = table.get_item(Key={'request_id': nickname})
+            item = resp.get('Item')
+            if not item:
+                return jsonify({'success': False, 'message': '참여 기록이 없습니다.'})
+            if item.get('password_hash') != hash_password(password):
+                return jsonify({'success': False, 'message': '비밀번호가 올바르지 않습니다.'})
+            return jsonify({
+                'success': True,
+                'status': item.get('status'),
+                'coupon_code': item.get('coupon_code', '')
+            })
+        except Exception as e:
+            return jsonify({'success': False, 'message': str(e)}), 500
 
     @app.route('/admin')
     def admin():
@@ -109,9 +140,8 @@ data:
         try:
             ddb = boto3.resource('dynamodb', region_name=AWS_REGION)
             table = ddb.Table(DDB_TABLE)
-            # scan 1번으로 모두 집계
-            winner_count = loser_count = email_sent_count = 0
-            scan_kw = {'ProjectionExpression': '#s, email_sent', 'ExpressionAttributeNames': {'#s': 'status'}}
+            winner_count = loser_count = 0
+            scan_kw = {'ProjectionExpression': '#s', 'ExpressionAttributeNames': {'#s': 'status'}}
             while True:
                 resp = table.scan(**scan_kw)
                 for item in resp.get('Items', []):
@@ -119,13 +149,11 @@ data:
                         winner_count += 1
                     elif item.get('status') == 'loser':
                         loser_count += 1
-                    if item.get('email_sent') == True:
-                        email_sent_count += 1
                 if 'LastEvaluatedKey' not in resp:
                     break
                 scan_kw['ExclusiveStartKey'] = resp['LastEvaluatedKey']
         except Exception as e:
-            winner_count = loser_count = email_sent_count = 0
+            winner_count = loser_count = 0
         try:
             sqs_resp = sqs_client.get_queue_attributes(
                 QueueUrl=QUEUE_URL,
@@ -140,7 +168,6 @@ data:
             'tickets_claimed': claimed,
             'winner_count': winner_count,
             'loser_count': loser_count,
-            'email_sent_count': email_sent_count,
             'queue_depth': queue_depth,
             'in_flight': in_flight
         })
@@ -170,9 +197,8 @@ data:
 
     @app.route('/api/admin/reset', methods=['POST'])
     def admin_reset():
-        # Redis 초기화
         r.set('tickets', TICKET_COUNT)
-        # SQS 큐 비우기 (대기 중인 메시지 모두 삭제)
+        r.delete('participants')
         try:
             while True:
                 resp = sqs_client.receive_message(QueueUrl=QUEUE_URL, MaxNumberOfMessages=10, WaitTimeSeconds=0)
@@ -183,7 +209,6 @@ data:
                     sqs_client.delete_message(QueueUrl=QUEUE_URL, ReceiptHandle=msg['ReceiptHandle'])
         except Exception as e:
             print(f'SQS flush warning: {e}', flush=True)
-        # DynamoDB 전체 삭제
         try:
             ddb_r = boto3.resource('dynamodb', region_name=AWS_REGION)
             table = ddb_r.Table(DDB_TABLE)
@@ -198,46 +223,7 @@ data:
                         batch.delete_item(Key={'request_id': item['request_id']})
         except Exception as e:
             print(f'DynamoDB reset warning: {e}', flush=True)
-        return jsonify({'success': True, 'message': f'티켓 {TICKET_COUNT}장, SQS 큐, DynamoDB 기록이 초기화되었습니다.'})
-
-    @app.route('/api/submit-email', methods=['POST'])
-    def submit_email():
-        data = request.get_json()
-        request_id = data.get('request_id', '')
-        email = data.get('email', '')
-        if not email or '@' not in email:
-            return jsonify({'success': False, 'message': '올바른 이메일을 입력해주세요.'})
-        result = r.get(f'result:{request_id}')
-        if result != 'winner':
-            return jsonify({'success': False, 'message': '당첨자가 아닙니다.'})
-        if r.get(f'email_sent:{request_id}'):
-            return jsonify({'success': False, 'message': '이미 발송되었습니다.'})
-        coupon = r.get(f'coupon:{request_id}')
-        if not coupon:
-            return jsonify({'success': False, 'message': '쿠폰 정보를 찾을 수 없습니다.'})
-        try:
-            ses_client.send_email(
-                Source=SENDER_EMAIL,
-                Destination={'ToAddresses': [email]},
-                Message={
-                    'Subject': {'Data': '🎉 80% 할인 쿠폰 당첨을 축하드립니다!'},
-                    'Body': {'Html': {'Data': f'<div style="font-family:sans-serif;max-width:500px;margin:0 auto;padding:40px;"><h2 style="color:#0a0a0a;margin-bottom:16px;">🎉 당첨을 축하합니다!</h2><p style="color:#555;margin-bottom:24px;">Y2KS 봄 시즌 80% 할인 쿠폰이 발급되었습니다.</p><div style="background:#f5f5f5;padding:24px;border-radius:8px;text-align:center;margin-bottom:24px;"><p style="font-size:11px;color:#999;margin-bottom:8px;letter-spacing:2px;">쿠폰 코드</p><strong style="font-size:26px;letter-spacing:6px;color:#0a0a0a;">{coupon}</strong></div><p style="color:#999;font-size:12px;">유효기간: 2026년 6월 30일까지<br>Y2KS 온라인 스토어에서 사용 가능합니다.</p></div>'}}
-                }
-            )
-            r.setex(f'email_sent:{request_id}', 600, '1')
-            try:
-                ddb = boto3.resource('dynamodb', region_name=AWS_REGION)
-                table = ddb.Table(DDB_TABLE)
-                table.update_item(
-                    Key={'request_id': request_id},
-                    UpdateExpression='SET email = :e, email_sent = :s',
-                    ExpressionAttributeValues={':e': email, ':s': True}
-                )
-            except Exception as ddb_e:
-                print(f'DynamoDB update warning: {ddb_e}', flush=True)
-            return jsonify({'success': True, 'coupon': coupon})
-        except Exception as e:
-            return jsonify({'success': False, 'message': f'이메일 발송 실패: {str(e)}'})
+        return jsonify({'success': True, 'message': f'티켓 {TICKET_COUNT}장, SQS 큐, DynamoDB, 참여자 목록이 초기화되었습니다.'})
 
     if __name__ == '__main__':
         app.run(host='0.0.0.0', port=5000, debug=False)
@@ -263,18 +249,18 @@ data:
         p2 = ''.join(random.choices(chars, k=4))
         return f'Y2KS-{p1}-{p2}'
 
-    def save_to_ddb(request_id, status, coupon_code=None):
+    def save_to_ddb(nickname, password_hash, status, coupon_code=None):
         item = {
-            'request_id': request_id,
+            'request_id': nickname,
+            'password_hash': password_hash,
             'status': status,
             'claimed_at': datetime.now(timezone.utc).isoformat(),
-            'email_sent': False
         }
         if coupon_code:
             item['coupon_code'] = coupon_code
         try:
             table.put_item(Item=item)
-            print(f'DynamoDB saved: {request_id} -> {status}', flush=True)
+            print(f'DynamoDB saved: {nickname} -> {status}', flush=True)
         except Exception as e:
             print(f'DynamoDB error: {e}', flush=True)
 
@@ -316,26 +302,27 @@ data:
                     receipt = msg['ReceiptHandle']
                     try:
                         body = json.loads(msg['Body'])
-                        request_id = body.get('request_id')
-                        print(f'Processing claim: {request_id}', flush=True)
+                        nickname = body.get('request_id')
+                        password_hash = body.get('password_hash', '')
+                        print(f'Processing claim: {nickname}', flush=True)
                         if r.get('tickets') is None:
                             remaining = restore_tickets_from_ddb()
-                            r.set('tickets', remaining, nx=True)  # 여러 Worker 동시 실행 시 한 번만 설정
+                            r.set('tickets', remaining, nx=True)
                         tickets = r.decr('tickets')
                         if tickets >= 0:
                             coupon = gen_coupon()
-                            r.setex(f'result:{request_id}', 600, 'winner')
-                            r.setex(f'coupon:{request_id}', 600, coupon)
-                            save_to_ddb(request_id, 'winner', coupon)
-                            print(f'Winner! coupon={coupon}, left={tickets}', flush=True)
+                            r.setex(f'result:{nickname}', 600, 'winner')
+                            r.setex(f'coupon:{nickname}', 600, coupon)
+                            save_to_ddb(nickname, password_hash, 'winner', coupon)
+                            print(f'Winner! nickname={nickname} coupon={coupon}, left={tickets}', flush=True)
                         else:
                             r.set('tickets', 0)
-                            r.setex(f'result:{request_id}', 600, 'loser')
-                            save_to_ddb(request_id, 'loser')
-                            print(f'Sold out. {request_id} missed.', flush=True)
+                            r.setex(f'result:{nickname}', 600, 'loser')
+                            save_to_ddb(nickname, password_hash, 'loser')
+                            print(f'Sold out. {nickname} missed.', flush=True)
                         sqs.delete_message(QueueUrl=QUEUE_URL, ReceiptHandle=receipt)
                     except Exception as e:
-                        print(f'Error processing {request_id}: {e} — message will be retried', flush=True)
+                        print(f'Error processing {nickname}: {e} — message will be retried', flush=True)
         except Exception as e:
             print(f'Queue error: {e}', flush=True)
             time.sleep(2)
