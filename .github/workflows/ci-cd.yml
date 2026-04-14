@@ -1,0 +1,175 @@
+name: Y2KS CI/CD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Dockerfile.*'
+      - 'helm/**'
+      - 'agents/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Dockerfile.*'
+      - 'helm/**'
+      - 'agents/**'
+
+env:
+  AWS_REGION: ap-northeast-2
+  CLUSTER_NAME: y2ks-eks-cluster
+  ECR_REGISTRY: 951913065915.dkr.ecr.ap-northeast-2.amazonaws.com
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  # ── CI: 코드 검증 ──────────────────────────────────────
+  lint:
+    name: 코드 검증
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python 설치
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 의존성 설치
+        run: pip install flake8
+
+      - name: Python 문법 검사
+        run: |
+          flake8 agents/ \
+            --max-line-length=120 \
+            --ignore=E501,W503 \
+            --exclude=__pycache__
+
+  # ── CI: Docker 빌드 검증 (PR 시) ──────────────────────
+  build-check:
+    name: Docker 빌드 검증
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Frontend 이미지 빌드 테스트 (x86)
+        run: docker build -f Dockerfile.frontend -t y2ks-frontend:test .
+
+      - name: Worker 이미지 빌드 테스트 (x86)
+        run: docker build -f Dockerfile.worker -t y2ks-worker:test .
+
+      - name: PR 코멘트 작성
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '✅ Docker 빌드 검증 통과 — merge 가능합니다.'
+            })
+
+  # ── CD: ECR 푸시 + EKS 배포 (main merge 시) ──────────
+  deploy:
+    name: ECR 푸시 + EKS 배포
+    runs-on: ubuntu-latest
+    needs: lint
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: AWS OIDC 인증
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::951913065915:role/Y2ksGitHubK6Role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: ECR 로그인
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: QEMU 설치 (ARM64 빌드용)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Docker Buildx 설정
+        uses: docker/setup-buildx-action@v3
+
+      - name: Frontend 이미지 빌드 & 푸시 (x86 + ARM64)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.frontend
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/y2ks-frontend:latest
+            ${{ env.ECR_REGISTRY }}/y2ks-frontend:${{ github.sha }}
+
+      - name: Worker 이미지 빌드 & 푸시 (x86 + ARM64)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.worker
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/y2ks-worker:latest
+            ${{ env.ECR_REGISTRY }}/y2ks-worker:${{ github.sha }}
+
+      - name: kubectl 설정
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ env.AWS_REGION }} \
+            --name ${{ env.CLUSTER_NAME }}
+
+      - name: Helm 배포 (롤링 업데이트)
+        run: |
+          helm upgrade y2ks ./helm/y2ks \
+            --namespace default \
+            --set images.frontend=${{ env.ECR_REGISTRY }}/y2ks-frontend:${{ github.sha }} \
+            --set images.worker=${{ env.ECR_REGISTRY }}/y2ks-worker:${{ github.sha }} \
+            --wait \
+            --timeout 5m
+
+      - name: 배포 검증
+        run: |
+          kubectl rollout status deployment/y2ks-frontend --timeout=120s
+          kubectl rollout status deployment/y2ks-worker --timeout=120s
+          echo "✅ 배포 완료: ${{ github.sha }}"
+
+  # ── k6 Smoke Test (배포 후 자동 실행) ─────────────────
+  smoke-test:
+    name: k6 스모크 테스트
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: AWS OIDC 인증
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::951913065915:role/Y2ksGitHubK6Role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: kubectl 설정
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ env.AWS_REGION }} \
+            --name ${{ env.CLUSTER_NAME }}
+
+      - name: k6 스모크 테스트 실행
+        run: |
+          # 기존 job 삭제 후 재실행
+          kubectl delete job k6-loadtest --ignore-not-found
+          kubectl apply -f k6/job.yaml
+          kubectl wait --for=condition=complete job/k6-loadtest --timeout=300s
+          echo "✅ 스모크 테스트 완료"
+
+      - name: 테스트 결과 로그
+        if: always()
+        run: kubectl logs job/k6-loadtest || true
