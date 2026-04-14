@@ -17,19 +17,27 @@ data:
         { duration: '30s', target: 0   },
       ],
       thresholds: {
-        http_req_failed:     ['rate<0.30'],
-        http_req_duration:   ['p(95)<10000'],
+        http_req_failed:   ['rate<0.30'],
+        http_req_duration: ['p(95)<10000'],
       },
     };
 
     export default function () {
-      const res = http.post(`${BASE_URL}/api/claim`, null, {
-        tags: { name: 'claim' },
-        timeout: '10s',
-      });
+      const nickname = `user_${__VU}_${__ITER}`;
+      const password = 'test1234';
+
+      const res = http.post(
+        `${BASE_URL}/api/claim`,
+        JSON.stringify({ nickname: nickname, password: password }),
+        {
+          headers: { 'Content-Type': 'application/json' },
+          tags: { name: 'claim' },
+          timeout: '10s',
+        }
+      );
 
       check(res, {
-        'status is 200': (r) => r.status === 200,
+        'status 200 or 409': (r) => r.status === 200 || r.status === 409,
         'has request_id': (r) => {
           try { return !!JSON.parse(r.body).request_id; } catch { return false; }
         },

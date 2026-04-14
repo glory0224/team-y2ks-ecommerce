@@ -31,7 +31,7 @@ spec:
           values: ["linux"]
         - key: karpenter.sh/capacity-type
           operator: In
-          values: ["on-demand", "spot"]
+          values: ["spot"]
         - key: karpenter.k8s.aws/instance-cpu
           operator: Lt
           values: ["8"]
@@ -41,7 +41,7 @@ spec:
         name: default
       expireAfter: 72h
   limits:
-    cpu: 20
+    cpu: 20  # 스팟 노드 스케일아웃 여유를 위해 20 유지
   disruption:
     consolidationPolicy: WhenEmptyOrUnderutilized
-    consolidateAfter: 30s
+    consolidateAfter: 10m

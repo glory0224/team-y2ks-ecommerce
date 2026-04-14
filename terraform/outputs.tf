@@ -52,19 +52,28 @@ output "karpenter_node_role_arn" {
 # ============================================================
 output "next_steps" {
   description = "terraform apply 완료 후 실행 순서"
-  value = <<-EOT
+  value       = <<-EOT
     [terraform apply 한 번으로 자동 완료]
     - VPC / EKS / IAM 생성
     - DynamoDB 테이블 생성 (y2ks-coupon-claims)
     - SQS 큐 생성 (y2ks-queue)
     - ECR 리포지토리 생성 + Docker 이미지 빌드 & 푸시
-    - Prometheus Helm 설치 (monitoring 네임스페이스)
+    - kube-prometheus-stack 설치 (Prometheus + Grafana, monitoring 네임스페이스)
     - KEDA Helm 설치
     - Karpenter Helm 설치
     - worker-sa 생성 + IRSA 어노테이션
     - Y2KS 앱 전체 배포 (Helm)
     - 계정 ID는 aws configure에서 자동으로 읽어옴
     - variables.tf의 team_member_usernames 등록된 팀원은 kubectl 권한 자동 부여
+
+    [Grafana 접속]
+    kubectl get svc -n monitoring prometheus-grafana
+    → EXTERNAL-IP 로 브라우저 접속 (admin / variables.tf의 grafana_admin_password)
+
+    [k6 부하 테스트]
+    kubectl delete job k6-loadtest --ignore-not-found
+    kubectl apply -f k6/job.yaml
+    kubectl logs -f job/k6-loadtest
 
     [팀원이 처음 설정할 것]
     1. aws configure (본인 IAM 자격증명 입력)

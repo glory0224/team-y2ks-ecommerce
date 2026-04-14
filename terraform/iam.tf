@@ -85,25 +85,6 @@ resource "aws_iam_role_policy_attachment" "worker_dynamodb" {
   policy_arn = aws_iam_policy.worker_dynamodb.arn
 }
 
-resource "aws_iam_role_policy" "worker_amp" {
-  name = "Y2ksWorkerAMPPolicy"
-  role = aws_iam_role.worker.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = [
-        "aps:RemoteWrite",
-        "aps:GetSeries",
-        "aps:GetLabels",
-        "aps:GetMetricMetadata"
-      ]
-      Resource = "*"
-    }]
-  })
-}
-
 # ============================================================
 # KEDA Operator IAM
 # 기존: keda-operator-trust-policy.json + AWS CLI
@@ -303,8 +284,8 @@ resource "aws_sqs_queue_policy" "karpenter_interruption" {
 # 없으면 큐가 있어도 이벤트가 들어오지 않아 Spot 종료를 미리 감지 불가
 # ============================================================
 resource "aws_cloudwatch_event_rule" "karpenter_spot_interruption" {
-  name          = "KarpenterSpotInterruption-${var.cluster_name}"
-  description   = "Karpenter: EC2 Spot 인터럽트 경고"
+  name        = "KarpenterSpotInterruption-${var.cluster_name}"
+  description = "Karpenter: EC2 Spot 인터럽트 경고"
   event_pattern = jsonencode({
     source      = ["aws.ec2"]
     detail-type = ["EC2 Spot Instance Interruption Warning"]
@@ -312,8 +293,8 @@ resource "aws_cloudwatch_event_rule" "karpenter_spot_interruption" {
 }
 
 resource "aws_cloudwatch_event_rule" "karpenter_rebalance" {
-  name          = "KarpenterRebalance-${var.cluster_name}"
-  description   = "Karpenter: EC2 인스턴스 리밸런싱 권고"
+  name        = "KarpenterRebalance-${var.cluster_name}"
+  description = "Karpenter: EC2 인스턴스 리밸런싱 권고"
   event_pattern = jsonencode({
     source      = ["aws.ec2"]
     detail-type = ["EC2 Instance Rebalance Recommendation"]
@@ -321,8 +302,8 @@ resource "aws_cloudwatch_event_rule" "karpenter_rebalance" {
 }
 
 resource "aws_cloudwatch_event_rule" "karpenter_instance_state" {
-  name          = "KarpenterInstanceState-${var.cluster_name}"
-  description   = "Karpenter: EC2 인스턴스 상태 변경"
+  name        = "KarpenterInstanceState-${var.cluster_name}"
+  description = "Karpenter: EC2 인스턴스 상태 변경"
   event_pattern = jsonencode({
     source      = ["aws.ec2"]
     detail-type = ["EC2 Instance State-change Notification"]
@@ -330,8 +311,8 @@ resource "aws_cloudwatch_event_rule" "karpenter_instance_state" {
 }
 
 resource "aws_cloudwatch_event_rule" "karpenter_scheduled_change" {
-  name          = "KarpenterScheduledChange-${var.cluster_name}"
-  description   = "Karpenter: AWS Health 예약 이벤트"
+  name        = "KarpenterScheduledChange-${var.cluster_name}"
+  description = "Karpenter: AWS Health 예약 이벤트"
   event_pattern = jsonencode({
     source      = ["aws.health"]
     detail-type = ["AWS Health Event"]
@@ -356,4 +337,76 @@ resource "aws_cloudwatch_event_target" "karpenter_instance_state" {
 resource "aws_cloudwatch_event_target" "karpenter_scheduled_change" {
   rule = aws_cloudwatch_event_rule.karpenter_scheduled_change.name
   arn  = aws_sqs_queue.karpenter_interruption.arn
+}
+
+# ============================================================
+# K6 Athena Pipeline IAM
+# ============================================================
+resource "aws_iam_role_policy" "worker_athena" {
+  name = "Y2ksWorkerAthenaPolicy"
+  role = aws_iam_role.worker.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:GetObject",
+          "s3:ListBucket",
+          "s3:GetBucketLocation",
+          "s3:GetBucketAcl"
+        ]
+        Resource = [
+          "arn:aws:s3:::y2ks-athena-*",
+          "arn:aws:s3:::y2ks-athena-*/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "athena:StartQueryExecution",
+          "athena:GetQueryExecution",
+          "athena:GetQueryResults",
+          "athena:GetWorkGroup"
+        ]
+        Resource = "arn:aws:athena:${var.aws_region}:${data.aws_caller_identity.current.account_id}:workgroup/y2ks-analytics"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "glue:GetTable",
+          "glue:GetDatabase",
+          "glue:GetPartitions",
+          "glue:CreateTable",
+          "glue:CreatePartition",
+          "glue:BatchCreatePartition",
+          "glue:UpdateTable",
+          "glue:UpdatePartition"
+        ]
+        Resource = [
+          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:catalog",
+          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:database/y2ks_analytics",
+          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/y2ks_analytics/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetBucketLocation",
+          "s3:GetObject",
+          "s3:ListBucket",
+          "s3:ListBucketMultipartUploads",
+          "s3:ListMultipartUploadParts",
+          "s3:AbortMultipartUpload",
+          "s3:CreateBucket",
+          "s3:PutObject"
+        ]
+        Resource = [
+          "arn:aws:s3:::aws-athena-query-results-*"
+        ]
+      }
+    ]
+  })
 }

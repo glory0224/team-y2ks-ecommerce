@@ -243,9 +243,9 @@ data:
           <div class="stat-sub">소진 후 참여</div>
         </div>
         <div class="stat-card">
-          <div class="stat-label">이메일 발송</div>
+          <div class="stat-label">SQS 대기</div>
           <div class="stat-value v-blue" id="s-email">-</div>
-          <div class="stat-sub">SES 발송 완료</div>
+          <div class="stat-sub">처리 대기 중</div>
         </div>
       </div>
       <div class="section-title" id="claims-title">클레임 내역</div>
@@ -253,16 +253,14 @@ data:
         <table>
           <thead>
             <tr>
-              <th>Request ID</th>
+              <th>닉네임</th>
               <th>상태</th>
               <th>쿠폰 코드</th>
-              <th>이메일</th>
-              <th>이메일 발송</th>
               <th>처리 시각</th>
             </tr>
           </thead>
           <tbody id="claims-body">
-            <tr><td colspan="6" class="empty">로딩 중...</td></tr>
+            <tr><td colspan="4" class="empty">로딩 중...</td></tr>
           </tbody>
         </table>
         <div class="pagination">
@@ -294,7 +292,7 @@ data:
         document.getElementById('s-left').textContent = d.tickets_left;
         document.getElementById('s-winner').textContent = d.winner_count;
         document.getElementById('s-loser').textContent = d.loser_count;
-        document.getElementById('s-email').textContent = d.email_sent_count;
+        document.getElementById('s-email').textContent = d.queue_depth;
         document.getElementById('last-updated').textContent = '업데이트: ' + new Date().toLocaleTimeString('ko-KR');
         return d;
       } catch(e) { console.error(e); return null; }
@@ -331,14 +329,10 @@ data:
           var statusBadge = item.status === 'winner'
             ? '<span class="badge b-winner">당첨</span>'
             : '<span class="badge b-loser">낙첨</span>';
-          var emailSent = item.email_sent
-            ? '<span class="badge b-sent">발송완료</span>'
-            : '<span class="badge b-pending">미발송</span>';
           var coupon = item.coupon_code || '-';
-          var email = item.email || '-';
           var time = item.claimed_at ? item.claimed_at.replace('T', ' ').substring(0, 19) : '-';
-          var shortId = item.request_id ? item.request_id.substring(0, 8) + '...' : '-';
-          return '<tr><td style="font-family:monospace;font-size:12px;color:#666" title="' + item.request_id + '">' + shortId + '</td><td>' + statusBadge + '</td><td style="font-family:monospace;letter-spacing:2px;color:var(--accent)">' + coupon + '</td><td style="color:#888">' + email + '</td><td>' + emailSent + '</td><td style="color:#555;font-size:12px">' + time + '</td></tr>';
+          var nickname = item.request_id || '-';
+          return '<tr><td style="font-size:13px;color:#ccc">' + nickname + '</td><td>' + statusBadge + '</td><td style="font-family:monospace;letter-spacing:2px;color:var(--accent)">' + coupon + '</td><td style="color:#555;font-size:12px">' + time + '</td></tr>';
         }).join('');
       } catch(e) { console.error(e); }
     }
@@ -386,54 +380,37 @@ data:
     .hero-title{font-family:'Outfit',sans-serif;font-size:58px;font-weight:800;line-height:1.1;letter-spacing:-2px;margin-bottom:16px}
     .hero-title span{color:var(--accent)}
     .hero-sub{font-size:15px;color:rgba(255,255,255,.5);margin-bottom:40px;line-height:1.7}
-    .ticket-badge{display:inline-flex;align-items:center;gap:10px;background:rgba(200,169,110,.12);border:1px solid rgba(200,169,110,.3);border-radius:50px;padding:12px 28px;margin-bottom:56px}
+    .ticket-badge{display:inline-flex;align-items:center;gap:10px;background:rgba(200,169,110,.12);border:1px solid rgba(200,169,110,.3);border-radius:50px;padding:12px 28px;margin-bottom:40px}
     .tb-label{font-size:12px;color:rgba(255,255,255,.5);letter-spacing:1px}
     .tb-count{font-family:'Outfit',sans-serif;font-size:22px;font-weight:700;color:var(--accent)}
-    .card{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:48px;max-width:520px;margin:0 auto;backdrop-filter:blur(10px)}
-    /* States */
+    .tabs{display:flex;gap:0;max-width:520px;margin:0 auto 0;border:1px solid rgba(255,255,255,.1);border-radius:12px 12px 0 0;overflow:hidden}
+    .tab-btn{flex:1;padding:14px;background:rgba(255,255,255,.03);color:rgba(255,255,255,.4);font-size:14px;font-weight:600;font-family:inherit;border:none;cursor:pointer;transition:all .2s;letter-spacing:.5px}
+    .tab-btn.active{background:rgba(200,169,110,.12);color:var(--accent);border-bottom:2px solid var(--accent)}
+    .card{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-top:none;border-radius:0 0 16px 16px;padding:40px 48px;max-width:520px;margin:0 auto 60px;backdrop-filter:blur(10px)}
+    .tab-panel{display:none}
+    .tab-panel.active{display:block}
+    .form-group{display:flex;flex-direction:column;gap:12px;margin-bottom:20px}
+    .form-input{padding:15px 18px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);border-radius:8px;color:#fff;font-size:14px;font-family:inherit;outline:none;transition:border-color .2s}
+    .form-input:focus{border-color:var(--accent)}
+    .form-input::placeholder{color:rgba(255,255,255,.3)}
+    .claim-btn{width:100%;padding:18px;background:linear-gradient(135deg,var(--accent),var(--accent-d));color:#fff;font-size:16px;font-weight:700;border:none;border-radius:10px;cursor:pointer;letter-spacing:1px;transition:all .3s;font-family:inherit}
+    .claim-btn:hover{transform:translateY(-2px);box-shadow:0 10px 28px rgba(200,169,110,.3)}
+    .claim-btn:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none}
     .state{display:none}
     .state.active{display:block}
-    /* Idle state */
-    .idle-icon{font-size:56px;margin-bottom:20px}
-    .idle-title{font-size:22px;font-weight:700;margin-bottom:10px}
-    .idle-sub{font-size:13px;color:rgba(255,255,255,.45);margin-bottom:36px;line-height:1.7}
-    .claim-btn{width:100%;padding:20px;background:linear-gradient(135deg,var(--accent),var(--accent-d));color:#fff;font-size:17px;font-weight:700;border:none;border-radius:10px;cursor:pointer;letter-spacing:1px;transition:all .3s;font-family:inherit}
-    .claim-btn:hover{transform:translateY(-3px);box-shadow:0 12px 32px rgba(200,169,110,.35)}
-    .claim-btn:active{transform:translateY(0)}
-    .claim-btn:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none}
-    /* Loading state */
-    .spinner{width:52px;height:52px;border:3px solid rgba(200,169,110,.2);border-top-color:var(--accent);border-radius:50%;animation:spin 0.9s linear infinite;margin:0 auto 24px}
+    .spinner{width:48px;height:48px;border:3px solid rgba(200,169,110,.2);border-top-color:var(--accent);border-radius:50%;animation:spin 0.9s linear infinite;margin:0 auto 20px}
     @keyframes spin{to{transform:rotate(360deg)}}
-    .loading-title{font-size:18px;font-weight:700;margin-bottom:10px}
-    .loading-sub{font-size:13px;color:rgba(255,255,255,.45);line-height:1.7}
-    /* Winner state */
+    .result-icon{font-size:56px;margin-bottom:16px}
+    .result-title{font-size:22px;font-weight:800;margin-bottom:10px}
+    .result-sub{font-size:13px;color:rgba(255,255,255,.45);margin-bottom:24px;line-height:1.7}
+    .coupon-code{font-family:'Outfit',sans-serif;font-size:26px;font-weight:800;letter-spacing:6px;color:#fff;background:rgba(200,169,110,.1);border:1px dashed rgba(200,169,110,.4);padding:18px 24px;border-radius:8px;margin:16px 0;text-align:center}
     .confetti-wrap{position:fixed;inset:0;pointer-events:none;z-index:999;overflow:hidden}
     .confetti{position:absolute;width:10px;height:10px;border-radius:2px;animation:fall linear forwards}
     @keyframes fall{0%{transform:translateY(-20px) rotate(0deg);opacity:1}100%{transform:translateY(110vh) rotate(720deg);opacity:0}}
-    .winner-icon{font-size:64px;margin-bottom:16px;animation:bounce .6s ease}
     @keyframes bounce{0%,100%{transform:scale(1)}50%{transform:scale(1.2)}}
-    .winner-title{font-size:26px;font-weight:800;color:var(--accent);margin-bottom:10px}
-    .winner-sub{font-size:13px;color:rgba(255,255,255,.5);margin-bottom:32px;line-height:1.7}
-    .email-form{display:flex;flex-direction:column;gap:12px}
-    .email-input{padding:15px 18px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);border-radius:8px;color:#fff;font-size:14px;font-family:inherit;outline:none;transition:border-color .2s}
-    .email-input:focus{border-color:var(--accent)}
-    .email-input::placeholder{color:rgba(255,255,255,.3)}
-    .submit-btn{padding:15px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;transition:all .3s;font-family:inherit}
-    .submit-btn:hover{background:var(--accent-d);transform:translateY(-2px)}
-    .submit-btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
-    /* Loser state */
-    .loser-icon{font-size:56px;margin-bottom:20px}
-    .loser-title{font-size:22px;font-weight:700;margin-bottom:10px}
-    .loser-sub{font-size:13px;color:rgba(255,255,255,.45);margin-bottom:28px;line-height:1.7}
-    .retry-btn{display:inline-block;padding:12px 32px;border:1px solid rgba(255,255,255,.2);border-radius:8px;font-size:14px;color:rgba(255,255,255,.7);transition:all .2s;cursor:pointer;font-family:inherit;background:none}
-    .retry-btn:hover{border-color:var(--accent);color:var(--accent)}
-    /* Done state */
-    .done-icon{font-size:56px;margin-bottom:20px}
-    .done-title{font-size:22px;font-weight:700;color:var(--accent);margin-bottom:10px}
-    .done-sub{font-size:13px;color:rgba(255,255,255,.45);margin-bottom:16px;line-height:1.7}
-    .coupon-code{font-family:'Outfit',sans-serif;font-size:28px;font-weight:800;letter-spacing:6px;color:#fff;background:rgba(200,169,110,.1);border:1px dashed rgba(200,169,110,.4);padding:18px 24px;border-radius:8px;margin:20px 0}
-    /* Error */
-    .error-msg{font-size:12px;color:#ef5350;margin-top:6px;text-align:center}
+    .error-msg{font-size:12px;color:#ef5350;margin-top:4px;text-align:center;min-height:18px}
+    .small-link{display:inline-block;margin-top:16px;padding:10px 28px;border:1px solid rgba(255,255,255,.2);border-radius:8px;font-size:13px;color:rgba(255,255,255,.6);cursor:pointer;background:none;font-family:inherit;transition:all .2s}
+    .small-link:hover{border-color:var(--accent);color:var(--accent)}
     </style>
     </head>
     <body>
@@ -447,68 +424,86 @@ data:
     <section class="hero">
       <div class="hero-label">LIMITED COUPON EVENT</div>
       <h1 class="hero-title">봄맞이 특별 쿠폰<br><span>100장</span> 무료 증정</h1>
-      <p class="hero-sub">선착순으로 90% 할인 쿠폰을 드립니다.<br>버튼을 눌러 지금 바로 참여하세요!</p>
+      <p class="hero-sub">선착순으로 90% 할인 쿠폰을 드립니다.<br>닉네임과 비밀번호로 참여하세요!</p>
       <div class="ticket-badge">
         <span class="tb-label">남은 쿠폰</span>
         <span class="tb-count" id="ticket-count">- / 100</span>
       </div>
 
+      <div class="tabs">
+        <button class="tab-btn active" onclick="switchTab('join')">🎁 쿠폰 참여</button>
+        <button class="tab-btn" onclick="switchTab('check')">🔍 결과 조회</button>
+      </div>
+
       <div class="card">
-        <!-- IDLE -->
-        <div class="state active" id="state-idle">
-          <div class="idle-icon">🎁</div>
-          <div class="idle-title">쿠폰 받기</div>
-          <div class="idle-sub">버튼을 클릭하면 대기열에 등록됩니다.<br>처리 후 당첨 여부를 알려드립니다.</div>
-          <button class="claim-btn" id="claim-btn" onclick="claimCoupon()">지금 쿠폰 받기</button>
-        </div>
-
-        <!-- LOADING -->
-        <div class="state" id="state-loading">
-          <div class="spinner"></div>
-          <div class="loading-title">대기열에서 처리 중입니다...</div>
-          <div class="loading-sub">잠시만 기다려주세요.<br>자동으로 결과를 확인하고 있습니다.</div>
-        </div>
-
-        <!-- WINNER -->
-        <div class="state" id="state-winner">
-          <div class="winner-icon">🎉</div>
-          <div class="winner-title">축하합니다! 당첨되셨습니다!</div>
-          <div class="winner-sub">90% 할인 쿠폰이 발급되었습니다.<br>이메일을 입력하시면 쿠폰 코드를 보내드립니다.</div>
-          <div class="email-form">
-            <input class="email-input" type="email" id="email-input" placeholder="이메일 주소를 입력하세요">
-            <button class="submit-btn" id="submit-btn" onclick="submitEmail()">쿠폰 이메일로 받기</button>
-            <div class="error-msg" id="email-error"></div>
+        <!-- 참여 탭 -->
+        <div class="tab-panel active" id="tab-join">
+          <!-- IDLE -->
+          <div class="state active" id="state-idle">
+            <div class="form-group">
+              <input class="form-input" type="text" id="nickname-input" placeholder="닉네임을 입력하세요" maxlength="30">
+              <input class="form-input" type="password" id="password-input" placeholder="비밀번호를 입력하세요" maxlength="50">
+            </div>
+            <button class="claim-btn" id="claim-btn" onclick="claimCoupon()">지금 쿠폰 받기</button>
+            <div class="error-msg" id="claim-error"></div>
+          </div>
+          <!-- LOADING -->
+          <div class="state" id="state-loading">
+            <div class="spinner"></div>
+            <div style="font-size:18px;font-weight:700;margin-bottom:8px">처리 중입니다...</div>
+            <div style="font-size:13px;color:rgba(255,255,255,.45)">잠시만 기다려주세요.</div>
+          </div>
+          <!-- WINNER -->
+          <div class="state" id="state-winner">
+            <div class="result-icon" style="animation:bounce .6s ease">🎉</div>
+            <div class="result-title" style="color:var(--accent)">당첨되셨습니다!</div>
+            <div class="result-sub">90% 할인 쿠폰이 발급되었습니다.<br>닉네임+비밀번호로 언제든지 다시 조회할 수 있습니다.</div>
+            <div class="coupon-code" id="coupon-display-winner"></div>
+            <div style="font-size:12px;color:rgba(255,255,255,.3)">유효기간: 2026년 6월 30일까지</div>
+          </div>
+          <!-- LOSER -->
+          <div class="state" id="state-loser">
+            <div class="result-icon">😢</div>
+            <div class="result-title">아쉽게도 놓쳤어요</div>
+            <div class="result-sub">쿠폰이 모두 소진되었습니다.<br>다음 이벤트에서 꼭 성공하시길 바랍니다!</div>
+            <a href="/" class="small-link">← 쇼핑 계속하기</a>
           </div>
         </div>
 
-        <!-- LOSER -->
-        <div class="state" id="state-loser">
-          <div class="loser-icon">😢</div>
-          <div class="loser-title">아쉽게도 이번엔 놓쳤어요</div>
-          <div class="loser-sub">쿠폰이 모두 소진되었습니다.<br>다음 이벤트에서 꼭 성공하시길 바랍니다!</div>
-          <a href="/" class="retry-btn">← 쇼핑 계속하기</a>
-        </div>
-
-        <!-- DONE -->
-        <div class="state" id="state-done">
-          <div class="done-icon">✅</div>
-          <div class="done-title">이메일 발송 완료!</div>
-          <div class="done-sub">쿠폰 코드를 이메일로 보내드렸습니다.<br>받은 편지함을 확인해 주세요.</div>
-          <div class="coupon-code" id="coupon-display"></div>
-          <div style="font-size:12px;color:rgba(255,255,255,.35);margin-top:8px;">유효기간: 2026년 6월 30일까지</div>
-          <br><a href="/" class="retry-btn" style="margin-top:16px">← 쇼핑 계속하기</a>
+        <!-- 결과 조회 탭 -->
+        <div class="tab-panel" id="tab-check">
+          <div class="state active" id="state-check-idle">
+            <div style="font-size:14px;color:rgba(255,255,255,.5);margin-bottom:20px;line-height:1.7">참여 시 입력한 닉네임과<br>비밀번호로 결과를 조회하세요.</div>
+            <div class="form-group">
+              <input class="form-input" type="text" id="check-nickname" placeholder="닉네임" maxlength="30">
+              <input class="form-input" type="password" id="check-password" placeholder="비밀번호" maxlength="50">
+            </div>
+            <button class="claim-btn" onclick="checkResult()">결과 확인하기</button>
+            <div class="error-msg" id="check-error"></div>
+          </div>
+          <div class="state" id="state-check-result">
+            <div class="result-icon" id="check-result-icon"></div>
+            <div class="result-title" id="check-result-title"></div>
+            <div class="result-sub" id="check-result-sub"></div>
+            <div class="coupon-code" id="coupon-display-check" style="display:none"></div>
+            <button class="small-link" onclick="resetCheckForm()">← 다시 조회</button>
+          </div>
         </div>
       </div>
     </section>
 
     <script>
-    let currentRequestId = null;
-    let pollInterval = null;
+    function switchTab(tab) {
+      document.querySelectorAll('.tab-btn').forEach(function(b,i){ b.classList.toggle('active', (tab==='join'&&i===0)||(tab==='check'&&i===1)); });
+      document.getElementById('tab-join').classList.toggle('active', tab==='join');
+      document.getElementById('tab-check').classList.toggle('active', tab==='check');
+    }
 
     function setState(name) {
-      document.querySelectorAll('.state').forEach(function(el) { el.classList.remove('active'); });
-      var el = document.getElementById('state-' + name);
-      if (el) el.classList.add('active');
+      ['idle','loading','winner','loser'].forEach(function(s){
+        var el = document.getElementById('state-'+s);
+        if(el) el.classList.toggle('active', s===name);
+      });
     }
 
     function updateTicketCount() {
@@ -517,28 +512,43 @@ data:
       }).catch(function(){});
     }
 
+    var currentNickname = null;
+    var pollInterval = null;
+
     async function claimCoupon() {
-      var btn = document.getElementById('claim-btn');
-      btn.disabled = true;
+      var nickname = document.getElementById('nickname-input').value.trim();
+      var password = document.getElementById('password-input').value.trim();
+      var errEl = document.getElementById('claim-error');
+      errEl.textContent = '';
+      if (!nickname || !password) { errEl.textContent = '닉네임과 비밀번호를 모두 입력해주세요.'; return; }
+      document.getElementById('claim-btn').disabled = true;
       setState('loading');
       try {
-        var res = await fetch('/api/claim', {method:'POST'});
+        var res = await fetch('/api/claim', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({nickname: nickname, password: password})
+        });
         var data = await res.json();
-        currentRequestId = data.request_id;
+        if (res.status === 409) { setState('idle'); document.getElementById('claim-btn').disabled=false; errEl.textContent='이미 참여하셨습니다. 결과 조회 탭을 이용해주세요.'; return; }
+        if (!res.ok) { setState('idle'); document.getElementById('claim-btn').disabled=false; errEl.textContent=data.message||'오류가 발생했습니다.'; return; }
+        currentNickname = data.request_id;
         pollInterval = setInterval(pollResult, 2000);
       } catch(e) {
         setState('idle');
-        btn.disabled = false;
-        alert('오류가 발생했습니다. 다시 시도해주세요.');
+        document.getElementById('claim-btn').disabled = false;
+        errEl.textContent = '네트워크 오류가 발생했습니다.';
       }
     }
 
     async function pollResult() {
       try {
-        var res = await fetch('/api/check/' + currentRequestId);
+        var res = await fetch('/api/check/' + encodeURIComponent(currentNickname));
         var data = await res.json();
         if (data.status === 'winner') {
           clearInterval(pollInterval);
+          var coupon = await getCouponFromDdb();
+          document.getElementById('coupon-display-winner').textContent = coupon;
           setState('winner');
           launchConfetti();
           updateTicketCount();
@@ -550,37 +560,61 @@ data:
       } catch(e) { console.error('poll error', e); }
     }
 
-    async function submitEmail() {
-      var email = document.getElementById('email-input').value;
-      var errEl = document.getElementById('email-error');
-      var btn = document.getElementById('submit-btn');
-      errEl.textContent = '';
-      if (!email || !email.includes('@')) {
-        errEl.textContent = '올바른 이메일 주소를 입력해주세요.';
-        return;
-      }
-      btn.disabled = true;
-      btn.textContent = '발송 중...';
+    async function getCouponFromDdb() {
+      var pw = document.getElementById('password-input').value.trim();
       try {
-        var res = await fetch('/api/submit-email', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({request_id: currentRequestId, email: email})
+        var res = await fetch('/api/result', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({nickname: currentNickname, password: pw})
+        });
+        var d = await res.json();
+        return d.coupon_code || '';
+      } catch(e) { return ''; }
+    }
+
+    async function checkResult() {
+      var nickname = document.getElementById('check-nickname').value.trim();
+      var password = document.getElementById('check-password').value.trim();
+      var errEl = document.getElementById('check-error');
+      errEl.textContent = '';
+      if (!nickname || !password) { errEl.textContent = '닉네임과 비밀번호를 입력해주세요.'; return; }
+      try {
+        var res = await fetch('/api/result', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({nickname: nickname, password: password})
         });
         var data = await res.json();
-        if (data.success) {
-          document.getElementById('coupon-display').textContent = data.coupon;
-          setState('done');
+        if (!data.success) { errEl.textContent = data.message; return; }
+        var iconEl = document.getElementById('check-result-icon');
+        var titleEl = document.getElementById('check-result-title');
+        var subEl = document.getElementById('check-result-sub');
+        var couponEl = document.getElementById('coupon-display-check');
+        if (data.status === 'winner') {
+          iconEl.textContent = '🎉';
+          titleEl.textContent = '당첨되셨습니다!';
+          titleEl.style.color = 'var(--accent)';
+          subEl.textContent = '아래 쿠폰 코드를 사용해주세요.';
+          couponEl.textContent = data.coupon_code;
+          couponEl.style.display = 'block';
+          launchConfetti();
         } else {
-          errEl.textContent = data.message || '오류가 발생했습니다.';
-          btn.disabled = false;
-          btn.textContent = '쿠폰 이메일로 받기';
+          iconEl.textContent = '😢';
+          titleEl.textContent = '낙첨되었습니다';
+          titleEl.style.color = '#fff';
+          subEl.textContent = '아쉽게도 쿠폰이 소진된 후 참여하셨습니다.';
+          couponEl.style.display = 'none';
         }
-      } catch(e) {
-        errEl.textContent = '네트워크 오류가 발생했습니다.';
-        btn.disabled = false;
-        btn.textContent = '쿠폰 이메일로 받기';
-      }
+        document.getElementById('state-check-idle').classList.remove('active');
+        document.getElementById('state-check-result').classList.add('active');
+      } catch(e) { errEl.textContent = '네트워크 오류가 발생했습니다.'; }
+    }
+
+    function resetCheckForm() {
+      document.getElementById('state-check-idle').classList.add('active');
+      document.getElementById('state-check-result').classList.remove('active');
+      document.getElementById('check-nickname').value = '';
+      document.getElementById('check-password').value = '';
+      document.getElementById('check-error').textContent = '';
     }
 
     function launchConfetti() {

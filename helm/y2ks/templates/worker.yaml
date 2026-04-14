@@ -16,6 +16,15 @@ spec:
     spec:
       serviceAccountName: worker-sa
       priorityClassName: y2ks-normal
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: karpenter.sh/capacity-type
+                operator: In
+                values: ["spot"]
       containers:
       - name: worker
         image: "{{ .Values.images.worker }}"
@@ -29,11 +38,11 @@ spec:
           failureThreshold: 3
         resources:
           requests:
-            cpu: 50m
-            memory: 100Mi
+            cpu: 500m  # LYK가 200m으로 낮췄으나 원래 설계값으로 복원
+            memory: 400Mi
           limits:
-            cpu: 200m
-            memory: 256Mi
+            cpu: 700m
+            memory: 512Mi
         env:
         - name: TICKET_COUNT
           value: "{{ .Values.ticketCount }}"

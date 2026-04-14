@@ -27,3 +27,10 @@ variable "team_member_usernames" {
   type        = list(string)
   default     = ["user01", "user02", "user03", "user04"]
 }
+
+variable "grafana_admin_password" {
+  description = "Grafana admin 비밀번호"
+  type        = string
+  default     = "admin123!"
+  sensitive   = true
+}

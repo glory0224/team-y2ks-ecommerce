@@ -1,0 +1,27 @@
+{
+  "title": "Karpenter Node Provisioning",
+  "uid": "karpenter-y2ks",
+  "schemaVersion": 36,
+  "time": {"from": "now-1h", "to": "now"},
+  "refresh": "30s",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Nodes Provisioned",
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "karpenter_cluster_state_node_count", "legendFormat": "Total Nodes"},
+        {"expr": "sum(karpenter_nodes_allocatable{resource_type=\"cpu\"})", "legendFormat": "Allocatable CPU (cores)"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Pod Scheduling Latency",
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.99, sum(rate(karpenter_pods_provisioning_startup_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p99"},
+        {"expr": "histogram_quantile(0.50, sum(rate(karpenter_pods_provisioning_startup_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p50"}
+      ]
+    }
+  ]
+}

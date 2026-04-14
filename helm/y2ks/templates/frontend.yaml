@@ -6,6 +6,11 @@ metadata:
     app: frontend
 spec:
   replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   selector:
     matchLabels:
       app: frontend
@@ -20,6 +25,20 @@ spec:
     spec:
       serviceAccountName: worker-sa
       priorityClassName: y2ks-high
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-type
+                operator: In
+                values: ["ondemand-1", "ondemand-2"]
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: frontend
+            topologyKey: kubernetes.io/hostname
       containers:
       - name: web
         image: "{{ .Values.images.frontend }}"

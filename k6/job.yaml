@@ -15,61 +15,31 @@ spec:
       serviceAccountName: worker-sa
       restartPolicy: Never
       priorityClassName: y2ks-high
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-type
+                operator: In
+                values: ["ondemand-1", "ondemand-2"]
       containers:
-      - name: sigv4proxy
-        image: public.ecr.aws/aws-observability/aws-sigv4-proxy:latest
-        args:
-          - --name
-          - aps
-          - --region
-          - $(AWS_REGION)
-          - --host
-          - aps-workspaces.$(AWS_REGION).amazonaws.com
-          - --port
-          - ":8005"
-        env:
-        - name: AWS_REGION
-          valueFrom:
-            configMapKeyRef:
-              name: aws-config
-              key: AWS_REGION
-        resources:
-          requests:
-            cpu: 50m
-            memory: 64Mi
-          limits:
-            cpu: 200m
-            memory: 128Mi
       - name: k6
         image: grafana/k6:latest
         command: ["/bin/sh", "-c"]
         args:
           - |
-            WORKSPACE_ID=$(cat /k6-config/ampWorkspaceId 2>/dev/null || echo "")
-            if [ -n "$WORKSPACE_ID" ]; then
-              echo "[k6] waiting for sigv4proxy on :8005..."
-              WAITED=0
-              while [ $WAITED -lt 30 ]; do
-                (echo > /dev/tcp/localhost/8005) 2>/dev/null && break
-                sleep 1
-                WAITED=$((WAITED+1))
-              done
-              echo "[k6] sigv4proxy ready (waited ${WAITED}s)"
-              export K6_PROMETHEUS_RW_SERVER_URL="http://localhost:8005/workspaces/${WORKSPACE_ID}/api/v1/remote_write"
-              export K6_PROMETHEUS_RW_TREND_AS_NATIVE_HISTOGRAM=false
-              export K6_PROMETHEUS_RW_TREND_STATS="p(50),p(95),p(99)"
-              echo "[k6] output: $K6_PROMETHEUS_RW_SERVER_URL"
-              k6 run /scripts/load-test.js --out experimental-prometheus-rw
-            else
-              echo "[k6] stdout mode"
-              k6 run /scripts/load-test.js
-            fi
+            k6 run --out experimental-prometheus-rw /scripts/load-test.js
         env:
         - name: TARGET_URL
           value: "http://y2ks-frontend-svc"
+        - name: K6_PROMETHEUS_RW_SERVER_URL
+          value: "http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090/api/v1/write"
+        - name: K6_PROMETHEUS_RW_TREND_STATS
+          value: "p(50),p(95),p(99)"
         resources:
           requests:
-            cpu: 500m
+            cpu: 300m
             memory: 512Mi
           limits:
             cpu: "2"
@@ -77,13 +47,7 @@ spec:
         volumeMounts:
         - name: k6-script
           mountPath: /scripts
-        - name: k6-config
-          mountPath: /k6-config
       volumes:
       - name: k6-script
         configMap:
           name: y2ks-k6-script
-      - name: k6-config
-        configMap:
-          name: y2ks-k6-config
-          optional: true

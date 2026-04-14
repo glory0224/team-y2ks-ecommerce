@@ -1,20 +1,22 @@
+# 상품 파드 — ondemand-node2(AZ-b) 고정, y2ks-low(100)
+# Worker(500)가 Pending 시 선점 대상이 되어 자리를 비워줌
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: redis
+  name: y2ks-product
   labels:
-    app: redis
+    app: product
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: redis
+      app: product
   template:
     metadata:
       labels:
-        app: redis
+        app: product
     spec:
-      priorityClassName: y2ks-critical
+      priorityClassName: y2ks-low
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -22,28 +24,26 @@ spec:
             - matchExpressions:
               - key: node-type
                 operator: In
-                values: ["ondemand-1"]
+                values: ["ondemand-2"]
       containers:
-      - name: redis
-        image: redis:alpine
-        ports:
-        - containerPort: 6379
+      - name: product
+        image: nginx:alpine
         resources:
           requests:
-            cpu: 100m
-            memory: 128Mi
+            cpu: 400m
+            memory: 400Mi
           limits:
-            cpu: 300m
-            memory: 256Mi
+            cpu: 500m
+            memory: 500Mi
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: redis-service
+  name: y2ks-product-svc
 spec:
   selector:
-    app: redis
+    app: product
   ports:
     - protocol: TCP
-      port: 6379
-      targetPort: 6379
+      port: 80
+      targetPort: 80

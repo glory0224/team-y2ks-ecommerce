@@ -1,20 +1,22 @@
+# 결제 파드 — ondemand-node1(AZ-a) 고정, y2ks-low(100)
+# Worker(500)가 Pending 시 선점 대상이 되어 자리를 비워줌
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: redis
+  name: y2ks-payment
   labels:
-    app: redis
+    app: payment
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: redis
+      app: payment
   template:
     metadata:
       labels:
-        app: redis
+        app: payment
     spec:
-      priorityClassName: y2ks-critical
+      priorityClassName: y2ks-low
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -24,26 +26,25 @@ spec:
                 operator: In
                 values: ["ondemand-1"]
       containers:
-      - name: redis
-        image: redis:alpine
-        ports:
-        - containerPort: 6379
+      - name: payment
+        # 시연용 더미 컨테이너 — 실제 결제 로직 없음
+        image: nginx:alpine
         resources:
           requests:
-            cpu: 100m
-            memory: 128Mi
-          limits:
             cpu: 300m
-            memory: 256Mi
+            memory: 300Mi
+          limits:
+            cpu: 400m
+            memory: 400Mi
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: redis-service
+  name: y2ks-payment-svc
 spec:
   selector:
-    app: redis
+    app: payment
   ports:
     - protocol: TCP
-      port: 6379
-      targetPort: 6379
+      port: 80
+      targetPort: 80
