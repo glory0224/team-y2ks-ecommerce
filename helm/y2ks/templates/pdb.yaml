@@ -9,26 +9,13 @@ spec:
     matchLabels:
       app: redis
 ---
-# Frontend-1 PDB: 트래픽 입구 보호
+# Frontend PDB: 트래픽 입구 보호 — 2개 중 최소 1개 보장
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: frontend-1-pdb
+  name: frontend-pdb
 spec:
   minAvailable: 1
   selector:
     matchLabels:
       app: frontend
-      instance: frontend-1
----
-# Frontend-2 PDB: 트래픽 입구 보호
-apiVersion: policy/v1
-kind: PodDisruptionBudget
-metadata:
-  name: frontend-2-pdb
-spec:
-  minAvailable: 1
-  selector:
-    matchLabels:
-      app: frontend
-      instance: frontend-2
