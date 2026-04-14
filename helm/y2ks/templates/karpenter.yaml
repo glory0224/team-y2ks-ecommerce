@@ -41,7 +41,7 @@ spec:
         name: default
       expireAfter: 72h
   limits:
-    cpu: 5
+    cpu: 20  # 스팟 노드 스케일아웃 여유를 위해 20 유지
   disruption:
     consolidationPolicy: WhenEmptyOrUnderutilized
     consolidateAfter: 10m

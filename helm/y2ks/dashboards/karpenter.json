@@ -10,8 +10,8 @@
       "title": "Nodes Provisioned",
       "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
       "targets": [
-        {"expr": "karpenter_nodes_total", "legendFormat": "Total Nodes"},
-        {"expr": "karpenter_nodes_allocatable{resource=\"cpu\"}", "legendFormat": "Allocatable CPU"}
+        {"expr": "karpenter_cluster_state_node_count", "legendFormat": "Total Nodes"},
+        {"expr": "sum(karpenter_nodes_allocatable{resource_type=\"cpu\"})", "legendFormat": "Allocatable CPU (cores)"}
       ]
     },
     {
@@ -19,8 +19,8 @@
       "title": "Pod Scheduling Latency",
       "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
       "targets": [
-        {"expr": "histogram_quantile(0.99, sum(rate(karpenter_pods_startup_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p99"},
-        {"expr": "histogram_quantile(0.50, sum(rate(karpenter_pods_startup_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p50"}
+        {"expr": "histogram_quantile(0.99, sum(rate(karpenter_pods_provisioning_startup_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p99"},
+        {"expr": "histogram_quantile(0.50, sum(rate(karpenter_pods_provisioning_startup_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p50"}
       ]
     }
   ]
