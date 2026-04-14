@@ -17,9 +17,11 @@ from mcp import StdioServerParameters
 
 AWS_REGION = os.environ.get("AWS_REGION", "ap-northeast-2")
 
-# ── 모델 설정 (Llama3 70B - 저렴 + 파인튜닝 가능) ──
+# ── 모델 설정 (Amazon Nova Micro - 서울 리전 최저가) ──
+# Nova Micro: $0.035/1M tokens, 텍스트 전용, 서울 리전 지원
+# 추후 RAG/파인튜닝 필요 시 → amazon.nova-lite-v1:0 으로 교체
 MODEL = BedrockModel(
-    model_id="meta.llama3-70b-instruct-v1:0",
+    model_id="amazon.nova-micro-v1:0",
     region_name=AWS_REGION,
 )
 
