@@ -43,7 +43,7 @@ spec:
       - name: web
         image: "{{ .Values.images.frontend }}"
         command: ["gunicorn"]
-        args: ["--bind", "0.0.0.0:5000", "--workers", "4", "--chdir", "/app", "app:app"]
+        args: ["--bind", "0.0.0.0:5000", "--worker-class", "gthread", "--workers", "2", "--threads", "8", "--timeout", "120", "--chdir", "/app", "app:app"]
         ports:
         - containerPort: 5000
         readinessProbe:
@@ -88,6 +88,12 @@ spec:
             configMapKeyRef:
               name: aws-config
               key: DDB_TABLE
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: anthropic-secret
+              key: ANTHROPIC_API_KEY
+              optional: true
         volumeMounts:
         - name: code-volume
           mountPath: /app
