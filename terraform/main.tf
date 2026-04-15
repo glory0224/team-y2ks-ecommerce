@@ -382,6 +382,7 @@ resource "null_resource" "install_karpenter" {
     command     = <<-EOT
       # Public ECR — 인증 없이 pull 가능 (퍼블릭 레포)
       Remove-Item "$env:APPDATA\helm\registry\config.json" -ErrorAction SilentlyContinue
+
       helm upgrade --install karpenter oci://public.ecr.aws/karpenter/karpenter `
         --version 1.1.1 `
         --namespace karpenter --create-namespace `

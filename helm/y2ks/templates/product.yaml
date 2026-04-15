@@ -24,7 +24,7 @@ spec:
             - matchExpressions:
               - key: node-type
                 operator: In
-                values: ["ondemand-2"]
+                values: ["ondemand-2", "ondemand-1"]
       containers:
       - name: product
         image: nginx:alpine

@@ -6,6 +6,11 @@ metadata:
     app: frontend
 spec:
   replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   selector:
     matchLabels:
       app: frontend
@@ -55,6 +60,7 @@ spec:
           initialDelaySeconds: 30
           periodSeconds: 10
           failureThreshold: 3
+          timeoutSeconds: 5
         resources:
           requests:
             cpu: 200m

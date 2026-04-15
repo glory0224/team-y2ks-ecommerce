@@ -38,7 +38,7 @@ spec:
           failureThreshold: 3
         resources:
           requests:
-            cpu: 500m
+            cpu: 500m  # LYK가 200m으로 낮췄으나 원래 설계값으로 복원
             memory: 400Mi
           limits:
             cpu: 700m
