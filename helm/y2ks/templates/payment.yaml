@@ -24,7 +24,7 @@ spec:
             - matchExpressions:
               - key: node-type
                 operator: In
-                values: ["ondemand-1"]
+                values: ["ondemand-1","ondemand-2"]
       containers:
       - name: payment
         # 시연용 더미 컨테이너 — 실제 결제 로직 없음
