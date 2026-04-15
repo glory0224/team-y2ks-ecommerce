@@ -30,4 +30,4 @@ dist/
 build/
 ### 5. AI Tool Metadata
 .kiro/
-.claude/
+.claude/__pycache__/

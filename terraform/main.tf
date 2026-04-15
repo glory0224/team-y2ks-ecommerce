@@ -380,12 +380,8 @@ resource "null_resource" "install_karpenter" {
   provisioner "local-exec" {
     interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
     command     = <<-EOT
-      # Public ECR은 us-east-1 고정 — 토큰 만료 방지를 위해 매번 재인증
-      $token = aws ecr-public get-login-password --region us-east-1
-      helm registry login --username AWS --password $token public.ecr.aws
-      if ($LASTEXITCODE -ne 0) { throw "Public ECR 로그인 실패" }
-      Write-Host "[OK] Public ECR 로그인 완료"
-
+      # Public ECR — 인증 없이 pull 가능 (퍼블릭 레포)
+      Remove-Item "$env:APPDATA\helm\registry\config.json" -ErrorAction SilentlyContinue
       helm upgrade --install karpenter oci://public.ecr.aws/karpenter/karpenter `
         --version 1.1.1 `
         --namespace karpenter --create-namespace `
