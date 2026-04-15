@@ -235,9 +235,9 @@ resource "null_resource" "install_prometheus" {
 # ============================================================
 resource "null_resource" "apply_monitoring_manifests" {
   triggers = {
-    cluster_name     = aws_eks_cluster.main.name
-    values_hash      = filesha256("${path.module}/../helm/y2ks/prometheus-values.yaml")
-    dashboards_hash  = sha256(join("", [
+    cluster_name = aws_eks_cluster.main.name
+    values_hash  = filesha256("${path.module}/../helm/y2ks/prometheus-values.yaml")
+    dashboards_hash = sha256(join("", [
       filesha256("${path.module}/../helm/y2ks/dashboards/keda.json"),
       filesha256("${path.module}/../helm/y2ks/dashboards/karpenter.json"),
       filesha256("${path.module}/../helm/y2ks/dashboards/k6.json"),
@@ -449,42 +449,115 @@ resource "null_resource" "install_y2ks" {
     when        = destroy
     interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
     command     = <<-EOT
-      Write-Host "=== [1/3] Karpenter ASG 직접 삭제 ==="
-      # Karpenter가 만든 ASG를 AWS CLI로 직접 삭제 (Karpenter가 죽어있어도 동작)
+      $ErrorActionPreference = "SilentlyContinue"
+      aws eks update-kubeconfig --name ${self.triggers.cluster_name} --region ap-northeast-2 2>$null
+
+      Write-Host "=== [0/4] EKS Cluster SG 인바운드/아웃바운드 규칙 사전 정리 ==="
+      # EKS가 자동 생성한 cluster SG의 규칙을 미리 제거해 VPC 삭제 블로킹 방지
+      $clusterSg = aws ec2 describe-security-groups `
+        --filters "Name=tag:kubernetes.io/cluster/${self.triggers.cluster_name},Values=owned" `
+                  "Name=group-name,Values=eks-cluster-sg-*" `
+        --query "SecurityGroups[0].GroupId" --output text --region ap-northeast-2 2>$null
+      if ($clusterSg -and $clusterSg -ne "None") {
+        $ingressRules = aws ec2 describe-security-group-rules `
+          --filters "Name=group-id,Values=$clusterSg" `
+          --query "SecurityGroupRules[?IsEgress==``false``].SecurityGroupRuleId" `
+          --output text --region ap-northeast-2 2>$null
+        if ($ingressRules -and $ingressRules -ne "None") {
+          $ruleIds = $ingressRules -split "\s+" | Where-Object { $_ }
+          aws ec2 revoke-security-group-ingress --group-id $clusterSg `
+            --security-group-rule-ids $ruleIds --region ap-northeast-2 2>$null
+        }
+        $egressRules = aws ec2 describe-security-group-rules `
+          --filters "Name=group-id,Values=$clusterSg" `
+          --query "SecurityGroupRules[?IsEgress==``true``].SecurityGroupRuleId" `
+          --output text --region ap-northeast-2 2>$null
+        if ($egressRules -and $egressRules -ne "None") {
+          $ruleIds = $egressRules -split "\s+" | Where-Object { $_ }
+          aws ec2 revoke-security-group-egress --group-id $clusterSg `
+            --security-group-rule-ids $ruleIds --region ap-northeast-2 2>$null
+        }
+        Write-Host "[OK] Cluster SG 규칙 정리: $clusterSg"
+      } else {
+        Write-Host "Cluster SG 없음 — 건너뜀"
+      }
+
+      Write-Host "=== [1/4] Karpenter 노드 drain 및 ASG 삭제 ==="
+      # kubectl drain 으로 K8s 레벨에서 먼저 노드 제거 (ENI 정리 유도)
+      $karpenterNodes = kubectl get nodes -l karpenter.sh/nodepool --no-headers -o name 2>$null
+      if ($karpenterNodes) {
+        foreach ($node in ($karpenterNodes -split "`n" | Where-Object { $_ })) {
+          Write-Host "노드 drain: $node"
+          kubectl drain $node --ignore-daemonsets --delete-emptydir-data --force --timeout=90s 2>$null
+          kubectl delete $node --timeout=30s 2>$null
+        }
+      } else {
+        Write-Host "Karpenter 노드 없음 — drain 건너뜀"
+      }
+
+      # Karpenter가 만든 모든 ASG를 AWS CLI로 직접 삭제 (Karpenter가 죽어있어도 동작)
+      # nodepool 태그가 있는 모든 ASG 대상 (default 외 다른 nodepool도 포함)
       $asgs = aws autoscaling describe-auto-scaling-groups `
-        --query "AutoScalingGroups[?contains(Tags[?Key=='karpenter.sh/nodepool'].Value, 'default')].AutoScalingGroupName" `
+        --query "AutoScalingGroups[?not_null(Tags[?Key=='karpenter.sh/nodepool'])].AutoScalingGroupName" `
         --output text 2>$null
       if ($asgs) {
-        foreach ($asg in $asgs -split "`t") {
-          if ($asg) {
-            Write-Host "ASG 삭제 중: $asg"
-            aws autoscaling delete-auto-scaling-group --auto-scaling-group-name $asg --force-delete
-          }
+        foreach ($asg in ($asgs -split "\s+" | Where-Object { $_ })) {
+          Write-Host "ASG 삭제 중: $asg"
+          aws autoscaling delete-auto-scaling-group --auto-scaling-group-name $asg --force-delete 2>$null
         }
-        Write-Host "ASG 삭제 요청 완료. EC2 terminate 대기 중 (60초)..."
-        Start-Sleep -Seconds 60
+        Write-Host "ASG 삭제 요청 완료. EC2 terminate 완료까지 폴링 (최대 10분)..."
+        $maxWait = 600
+        $elapsed = 0
+        while ($elapsed -lt $maxWait) {
+          $runningCount = aws ec2 describe-instances `
+            --filters "Name=tag:karpenter.sh/nodepool,Values=*" `
+                      "Name=instance-state-name,Values=pending,running,stopping" `
+            --query "length(Reservations[].Instances[])" --output text 2>$null
+          if (-not $runningCount -or $runningCount -eq "0") {
+            Write-Host "[OK] 모든 Karpenter 노드 종료 완료 ($elapsed s)"; break
+          }
+          Write-Host "Karpenter 노드 $runningCount 개 종료 대기... ($elapsed s)"
+          Start-Sleep -Seconds 15
+          $elapsed += 15
+        }
+        if ($elapsed -ge $maxWait) { Write-Host "[WARN] Karpenter EC2 종료 타임아웃 — 수동 확인 필요" }
       } else {
         Write-Host "Karpenter ASG 없음 — 건너뜀"
       }
 
-      Write-Host "=== [2/3] Y2KS 앱 삭제 (LoadBalancer → ELB → ENI 정리) ==="
+      Write-Host "=== [2/4] Y2KS 앱 삭제 (LoadBalancer → ELB → ENI 정리) ==="
       helm uninstall y2ks --namespace default --timeout 2m0s 2>$null
 
-      Write-Host "ELB 삭제 확인 중 (최대 3분)..."
+      Write-Host "ELB 삭제 확인 중 (최대 10분)..."
       $vpcId = aws ec2 describe-vpcs --filters "Name=tag:Name,Values=${self.triggers.cluster_name}-vpc" --query "Vpcs[0].VpcId" --output text 2>$null
-      $timeout = 180
+      $timeout = 600
       $elapsed = 0
       while ($elapsed -lt $timeout) {
         $classicElbs = (aws elb describe-load-balancers --query "LoadBalancerDescriptions[?VPCId=='$vpcId'].LoadBalancerName" --output text 2>$null)
         $v2Elbs = (aws elbv2 describe-load-balancers --query "LoadBalancers[?VpcId=='$vpcId'].LoadBalancerArn" --output text 2>$null)
         $classicElbs = if ($classicElbs) { $classicElbs.Trim() } else { "" }
         $v2Elbs = if ($v2Elbs) { $v2Elbs.Trim() } else { "" }
-        if ([string]::IsNullOrEmpty($classicElbs) -and [string]::IsNullOrEmpty($v2Elbs)) { Write-Host "ELB 삭제 완료 확인"; break }
-        Write-Host "ELB 삭제 대기 중... ($elapsed s)"
+        if ([string]::IsNullOrEmpty($classicElbs) -and [string]::IsNullOrEmpty($v2Elbs)) { Write-Host "[OK] ELB 삭제 완료 확인 ($elapsed s)"; break }
+        Write-Host "ELB 삭제 대기 중... ($elapsed s) Classic=$classicElbs V2=$v2Elbs"
         Start-Sleep -Seconds 10
         $elapsed += 10
       }
-      if ($elapsed -ge $timeout) { Write-Host "[WARN] ELB 삭제 타임아웃 — 수동 확인 필요" }
+      if ($elapsed -ge $timeout) { Write-Host "[WARN] ELB 삭제 타임아웃 — 수동으로 ELB 및 ENI 확인 필요" }
+
+      Write-Host "=== [3/4] 잔존 ENI 확인 ==="
+      if ($vpcId -and $vpcId -ne "None") {
+        $stuckEnis = aws ec2 describe-network-interfaces `
+          --filters "Name=vpc-id,Values=$vpcId" `
+                    "Name=status,Values=in-use" `
+          --query "NetworkInterfaces[*].{Id:NetworkInterfaceId,Status:Status,Desc:Description}" `
+          --output text 2>$null
+        if ($stuckEnis -and $stuckEnis -ne "None") {
+          Write-Host "[WARN] VPC에 in-use ENI 남아있음:`n$stuckEnis"
+        } else {
+          Write-Host "[OK] 잔존 ENI 없음"
+        }
+      }
+
       Write-Host "=== Y2KS 정리 완료 ==="
     EOT
   }
