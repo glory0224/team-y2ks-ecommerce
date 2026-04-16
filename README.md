@@ -94,8 +94,7 @@ KEDA + Karpenter로 트래픽 스파이크를 자동 대응하며, Terraform 한
 │       ├── keda.yaml               # KEDA ScaledObject + TriggerAuthentication
 │       ├── karpenter.yaml          # Karpenter EC2NodeClass + NodePool
 │       ├── priority-classes.yaml   # PriorityClass 정의
-│       ├── pdb.yaml                # PodDisruptionBudget (Redis, Frontend)
-│       └── secret-anthropic.yaml  # Anthropic API Key Secret (값은 kubectl로 주입)
+│       └── pdb.yaml                # PodDisruptionBudget (Redis, Frontend)
 │
 └── k6/
     └── job.yaml                # k6 부하 테스트 Job (EKS 내 실행)
@@ -192,7 +191,7 @@ kubectl get svc y2ks-frontend-svc
 |-----|------|
 | `/` | 쇼핑몰 메인 |
 | `/event` | 쿠폰 이벤트 페이지 |
-| `/admin` | 관리자 페이지 (이벤트 현황, AI 운영 어시스턴트 채팅 내장) |
+| `/admin` | 관리자 페이지 (이벤트 현황, 부하테스트, 파드/노드 모니터링) |
 
 ---
 
@@ -304,73 +303,6 @@ terraform apply
 
 `helm/y2ks/templates/` 파일 변경 시 자동 감지 후 재배포됩니다.  
 `Dockerfile.frontend` 또는 `Dockerfile.worker` 변경 시 ECR 이미지도 자동으로 재빌드 & 푸시됩니다.
-
----
-
-## AI 운영 어시스턴트 (멀티에이전트 채팅)
-
-관리자 페이지(`/admin`)에 내장된 AI 채팅 기능으로, 운영자가 자연어로 프로젝트 상태를 질문하면 전문가 에이전트들이 실시간으로 협업하여 답변을 제공합니다.
-
-### 동작 방식
-
-```
-운영자 질문
-    │
-    ▼
-[Team Leader Agent]  ← 질문 분석 및 라우팅
-    │
-    ├──→ [EKS Expert]      파드/노드/KEDA/Karpenter/Prometheus 관련
-    ├──→ [Infra Expert]    Terraform/DynamoDB/SQS/IAM/VPC 관련
-    └──→ [DB Expert]       쿠폰 클레임/Redis 티켓/데이터 정합성 관련
-              │
-              ▼
-    [Team Leader] 결과 통합 → 최종 답변 스트리밍
-```
-
-- **실시간 시각화**: 에이전트 간 위임 과정을 화면에서 실시간 확인 (노드 상태: 대기 → 활성(금색 펄싱) → 완료(초록))
-- **병렬 처리**: 독립적인 도메인 질문은 여러 전문가에게 동시에 위임
-- **스트리밍 답변**: 전문가 답변과 최종 종합 답변이 토큰 단위로 실시간 표시
-- **지식 기반**: 실제 명령 실행 없이 프로젝트 아키텍처 지식으로 답변 + 운영자용 명령어 제안
-
-### 질문 예시
-
-| 질문 | 위임되는 에이전트 |
-|------|----------------|
-| "KEDA ScaledObject 설정이 어떻게 되어있나요?" | EKS Expert |
-| "DynamoDB 테이블에 GSI를 추가하려면?" | Infra Expert |
-| "현재 당첨자가 몇 명인지 확인하려면?" | DB Expert |
-| "플래시 세일 준비 상태를 점검해주세요" | EKS + DB Expert 병렬 |
-| "terraform apply 후 파드 상태에 이상이 있어요" | Infra + EKS Expert 병렬 |
-
-### 사전 설정 (배포 전 필수)
-
-```powershell
-# Anthropic API Key를 Kubernetes Secret으로 생성
-kubectl create secret generic anthropic-secret \
-  --from-literal=ANTHROPIC_API_KEY="sk-ant-..." \
-  --dry-run=client -o yaml | kubectl apply -f -
-```
-
-> API Key 없이도 앱은 정상 동작하며, 채팅 기능만 비활성화됩니다 (`optional: true` 설정).
-
-### 기술 구현 세부 사항
-
-| 항목 | 내용 |
-|------|------|
-| AI 모델 | `claude-sonnet-4-6` (Anthropic API) |
-| 통신 방식 | Server-Sent Events (SSE) — 단방향 실시간 스트리밍 |
-| 에이전트 패턴 | Tool Use (team-leader가 specialist tool 호출) |
-| 병렬성 | `threading.Thread`로 복수 전문가 동시 호출 |
-| 세션 관리 | 인메모리 `queue.Queue` (30분 TTL 자동 정리) |
-| Gunicorn | `gthread` worker class, 2 workers × 8 threads, timeout 120s |
-
-### UI 사용법
-
-1. `/admin` 페이지 우측 상단 **AI Assistant** 버튼 클릭
-2. 오른쪽 사이드패널에 채팅 창 열림
-3. 하단 입력창에 질문 입력 후 `↑` 버튼 또는 `Enter`
-4. 에이전트 플로우 시각화 영역에서 실시간 위임 과정 확인
-5. 각 전문가 답변과 최종 Team Leader 종합 답변 확인
 
 ---
 
