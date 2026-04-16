@@ -213,43 +213,6 @@ data:
     .pg-btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
     .pg-btn:disabled{opacity:.3;cursor:default}
     .pg-info{font-size:12px;color:#555;padding:0 12px}
-    /* ── AI 채팅 사이드패널 ─────────────────────────── */
-    body{overflow:hidden}
-    .layout{display:flex;height:calc(100vh - 64px);overflow:hidden}
-    .content-wrap{flex:1;overflow-y:auto}
-    .chat-panel{width:0;overflow:hidden;transition:width .3s ease;background:#111;border-left:1px solid #1f1f1f;display:flex;flex-direction:column;flex-shrink:0}
-    .chat-panel.open{width:400px;min-width:400px}
-    .ai-btn{background:rgba(200,169,110,.1);border:1px solid rgba(200,169,110,.3);color:var(--accent);padding:8px 18px;border-radius:6px;font-size:13px;font-family:inherit;cursor:pointer;transition:all .2s}
-    .ai-btn:hover{background:rgba(200,169,110,.2)}
-    .ai-btn.active{background:rgba(200,169,110,.2);border-color:var(--accent)}
-    .chat-hdr{padding:16px 20px;border-bottom:1px solid #1f1f1f;font-size:11px;letter-spacing:2px;color:#555;text-transform:uppercase;font-weight:600;white-space:nowrap}
-    .agent-flow{padding:12px 20px;border-bottom:1px solid #1f1f1f}
-    .agent-nodes{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:6px}
-    .agent-node{display:flex;align-items:center;gap:5px;font-size:11px;color:#444;white-space:nowrap}
-    .nd{width:8px;height:8px;border-radius:50%;background:#252525;transition:all .3s;flex-shrink:0}
-    .nd.active{background:var(--accent);box-shadow:0 0 8px rgba(200,169,110,.6);animation:ndpulse .8s infinite}
-    .nd.done{background:var(--green)}
-    @keyframes ndpulse{0%,100%{transform:scale(1)}50%{transform:scale(1.3)}}
-    .flow-st{font-size:11px;color:#333;min-height:14px;line-height:1.4}
-    .chat-msgs{flex:1;overflow-y:auto;padding:14px 18px;display:flex;flex-direction:column;gap:10px;scrollbar-width:thin;scrollbar-color:#1f1f1f transparent}
-    .msg-u{align-self:flex-end;background:#1e1e1e;border:1px solid #2a2a2a;border-radius:10px 10px 2px 10px;padding:9px 13px;max-width:88%;font-size:13px;color:#e0e0e0;line-height:1.5}
-    .msg-a{align-self:flex-start;max-width:95%;min-width:0}
-    .msg-a-hdr{font-size:10px;letter-spacing:1px;margin-bottom:4px;font-weight:700;text-transform:uppercase;padding-left:2px}
-    .msg-a-body{background:#161616;border-radius:2px 10px 10px 10px;padding:9px 13px;font-size:12px;color:#bbb;line-height:1.65;border-left:3px solid #2a2a2a;white-space:pre-wrap;word-break:break-word;min-height:20px}
-    .msg-eks .msg-a-hdr{color:#4a9eff}
-    .msg-eks .msg-a-body{border-left-color:#4a9eff}
-    .msg-infra .msg-a-hdr{color:var(--green)}
-    .msg-infra .msg-a-body{border-left-color:var(--green)}
-    .msg-db .msg-a-hdr{color:var(--purple)}
-    .msg-db .msg-a-body{border-left-color:var(--purple)}
-    .msg-tl .msg-a-hdr{color:var(--accent)}
-    .msg-tl .msg-a-body{border-left-color:var(--accent)}
-    .chat-inp-wrap{padding:12px 14px;border-top:1px solid #1f1f1f;display:flex;gap:8px;align-items:flex-end}
-    .chat-inp{flex:1;background:#1a1a1a;border:1px solid #252525;border-radius:8px;color:#e0e0e0;padding:9px 12px;font-size:13px;font-family:inherit;outline:none;resize:none;height:38px;max-height:100px;overflow-y:auto;transition:border-color .2s;line-height:1.5}
-    .chat-inp:focus{border-color:#333}
-    .chat-send{background:var(--accent);border:none;color:#000;width:38px;height:38px;border-radius:8px;cursor:pointer;font-size:16px;transition:background .2s;flex-shrink:0;font-weight:700}
-    .chat-send:hover{background:var(--accent-d)}
-    .chat-send:disabled{opacity:.35;cursor:default}
     </style>
     </head>
     <body>
@@ -257,13 +220,11 @@ data:
       <div class="logo">Y2KS <span>ADMIN</span></div>
       <div class="header-right">
         <span class="last-updated" id="last-updated">-</span>
-        <button class="ai-btn" id="ai-toggle-btn" onclick="toggleChat()">AI Assistant</button>
         <button class="reset-btn" onclick="resetTickets()">티켓 초기화</button>
       </div>
     </header>
     
-    <div class="layout">
-    <div class="content-wrap" id="panel-events">
+    <div id="panel-events">
     <main class="main">
       <div class="stats-grid">
         <div class="stat-card">
@@ -312,25 +273,7 @@ data:
       </div>
     </main>
     </div>
-    <div class="chat-panel" id="chat-panel">
-      <div class="chat-hdr">AI OPERATIONS ASSISTANT</div>
-      <div class="agent-flow">
-        <div class="agent-nodes">
-          <div class="agent-node"><div class="nd" id="nd-tl"></div><span>Team Leader</span></div>
-          <div class="agent-node"><div class="nd" id="nd-eks"></div><span style="color:#4a9eff">EKS Expert</span></div>
-          <div class="agent-node"><div class="nd" id="nd-infra"></div><span style="color:var(--green)">Infra Expert</span></div>
-          <div class="agent-node"><div class="nd" id="nd-db"></div><span style="color:var(--purple)">DB Expert</span></div>
-        </div>
-        <div class="flow-st" id="flow-st">질문을 입력하면 에이전트가 분석합니다.</div>
-      </div>
-      <div class="chat-msgs" id="chat-msgs"></div>
-      <div class="chat-inp-wrap">
-        <textarea class="chat-inp" id="chat-inp" placeholder="프로젝트 상태, 장애 분석, 운영 현황 등 질문하세요..." onkeydown="chatKeyDown(event)"></textarea>
-        <button class="chat-send" id="chat-send" onclick="sendChatMsg()">↑</button>
-      </div>
-    </div>
-    </div>
-
+    
     <div class="toast" id="toast"></div>
     <script>
     // ── 토스트 ──────────────────────────────────────────
@@ -410,156 +353,6 @@ data:
     
     loadAll();
     setInterval(loadAll, 3000);
-
-    // ── AI 채팅 사이드패널 ────────────────────────────────
-    var _chatOpen = false;
-    var _chatEs = null;
-    var _chatEnabled = true;
-    var _agentBubbles = {};
-
-    var _AGENT_CLS = {
-      'EKS Expert': 'msg-eks',
-      'Infra Expert': 'msg-infra',
-      'Database Expert': 'msg-db',
-      'Team Leader': 'msg-tl'
-    };
-    var _NODE_IDS = {
-      'EKS Expert': 'nd-eks',
-      'Infra Expert': 'nd-infra',
-      'Database Expert': 'nd-db',
-      'Team Leader': 'nd-tl',
-      'team-leader': 'nd-tl'
-    };
-
-    function toggleChat() {
-      _chatOpen = !_chatOpen;
-      document.getElementById('chat-panel').classList.toggle('open', _chatOpen);
-      document.getElementById('ai-toggle-btn').classList.toggle('active', _chatOpen);
-    }
-
-    function _setNode(name, state) {
-      var id = _NODE_IDS[name];
-      if (!id) return;
-      var el = document.getElementById(id);
-      if (!el) return;
-      el.className = 'nd' + (state === 'active' ? ' active' : state === 'done' ? ' done' : '');
-    }
-
-    function _resetNodes() {
-      ['nd-tl','nd-eks','nd-infra','nd-db'].forEach(function(id) {
-        var el = document.getElementById(id);
-        if (el) el.className = 'nd';
-      });
-      document.getElementById('flow-st').textContent = '';
-    }
-
-    function _appendUserMsg(text) {
-      var msgs = document.getElementById('chat-msgs');
-      var d = document.createElement('div');
-      d.className = 'msg-u';
-      d.textContent = text;
-      msgs.appendChild(d);
-      msgs.scrollTop = msgs.scrollHeight;
-    }
-
-    function _getOrCreateBubble(agentName) {
-      if (_agentBubbles[agentName]) return _agentBubbles[agentName];
-      var msgs = document.getElementById('chat-msgs');
-      var cls = _AGENT_CLS[agentName] || '';
-      var wrap = document.createElement('div');
-      wrap.className = 'msg-a ' + cls;
-      var hdr = document.createElement('div');
-      hdr.className = 'msg-a-hdr';
-      hdr.textContent = agentName;
-      var body = document.createElement('div');
-      body.className = 'msg-a-body';
-      wrap.appendChild(hdr);
-      wrap.appendChild(body);
-      msgs.appendChild(wrap);
-      _agentBubbles[agentName] = body;
-      return body;
-    }
-
-    function chatKeyDown(e) {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMsg(); }
-    }
-
-    async function sendChatMsg() {
-      if (!_chatEnabled) return;
-      var input = document.getElementById('chat-inp');
-      var text = input.value.trim();
-      if (!text) return;
-      input.value = '';
-      _agentBubbles = {};
-      _resetNodes();
-      _appendUserMsg(text);
-      _chatEnabled = false;
-      document.getElementById('chat-send').disabled = true;
-      _setNode('team-leader', 'active');
-      try {
-        var resp = await fetch('/api/chat', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({message: text})
-        });
-        var data = await resp.json();
-        if (!resp.ok || data.error) {
-          _appendErrMsg(data.error || '서버 오류');
-          _enableChat();
-          return;
-        }
-        if (_chatEs) _chatEs.close();
-        _chatEs = new EventSource('/api/chat/stream/' + data.session_id);
-        _chatEs.onmessage = function(e) { _handleEv(JSON.parse(e.data)); };
-        _chatEs.onerror = function() { _enableChat(); };
-      } catch(e) {
-        _appendErrMsg('네트워크 오류가 발생했습니다.');
-        _enableChat();
-      }
-    }
-
-    function _handleEv(ev) {
-      var msgs = document.getElementById('chat-msgs');
-      if (ev.type === 'status') {
-        document.getElementById('flow-st').textContent = ev.message;
-      } else if (ev.type === 'delegation') {
-        _setNode(ev.to, 'active');
-        document.getElementById('flow-st').textContent = 'Team Leader → ' + ev.to;
-      } else if (ev.type === 'agent_thinking') {
-        var body = _getOrCreateBubble(ev.agent);
-        body.textContent += ev.content;
-        msgs.scrollTop = msgs.scrollHeight;
-      } else if (ev.type === 'agent_done') {
-        _setNode(ev.agent, 'done');
-      } else if (ev.type === 'final_answer') {
-        var body = _getOrCreateBubble('Team Leader');
-        body.textContent += ev.content;
-        msgs.scrollTop = msgs.scrollHeight;
-      } else if (ev.type === 'done') {
-        _setNode('team-leader', 'done');
-        document.getElementById('flow-st').textContent = '✓ 완료';
-        if (_chatEs) { _chatEs.close(); _chatEs = null; }
-        _enableChat();
-      } else if (ev.type === 'error') {
-        _appendErrMsg(ev.message);
-        if (_chatEs) { _chatEs.close(); _chatEs = null; }
-        _enableChat();
-      }
-    }
-
-    function _appendErrMsg(text) {
-      var msgs = document.getElementById('chat-msgs');
-      var d = document.createElement('div');
-      d.style.cssText = 'font-size:12px;color:#ef4444;padding:6px 0;text-align:center';
-      d.textContent = text;
-      msgs.appendChild(d);
-      msgs.scrollTop = msgs.scrollHeight;
-    }
-
-    function _enableChat() {
-      _chatEnabled = true;
-      document.getElementById('chat-send').disabled = false;
-    }
     </script>
     </body>
     </html>
