@@ -183,10 +183,17 @@ data:
     .tab-btn{padding:16px 20px;font-size:13px;font-family:inherit;background:none;border:none;border-bottom:2px solid transparent;color:#555;cursor:pointer;transition:all .2s;letter-spacing:.5px}
     .tab-btn.active{color:var(--accent);border-bottom-color:var(--accent)}
     .tab-btn:hover:not(.active){color:#e8e8e8}
-    .chat-panel{display:flex;flex-direction:column;height:calc(100vh - 130px);max-width:1000px;margin:0 auto;padding:24px 40px}
-    .chat-header{margin-bottom:20px}
+    .chat-panel{display:flex;flex-direction:column;height:calc(100vh - 130px);max-width:1100px;margin:0 auto;padding:24px 40px}
+    .chat-header{margin-bottom:16px;display:flex;align-items:center;justify-content:space-between}
     .chat-title{font-size:13px;letter-spacing:2px;color:#555;text-transform:uppercase}
     .chat-sub{font-size:12px;color:#333;margin-top:4px}
+    .quick-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+    .qa-btn{background:#111;border:1px solid #2a2a2a;color:#9e9e9e;padding:6px 14px;border-radius:6px;font-size:12px;font-family:inherit;cursor:pointer;transition:all .2s;white-space:nowrap}
+    .qa-btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+    .qa-btn:disabled{opacity:.4;cursor:default}
+    .diag-btn{background:linear-gradient(135deg,#1a1a2e,#2d1b4e);border:1px solid var(--accent);color:var(--accent);padding:6px 16px;border-radius:6px;font-size:12px;font-family:inherit;cursor:pointer;font-weight:700;transition:all .2s;white-space:nowrap}
+    .diag-btn:hover:not(:disabled){background:rgba(200,169,110,.15)}
+    .diag-btn:disabled{opacity:.4;cursor:default}
     .chat-messages{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:16px;padding-right:4px}
     .msg-user{align-self:flex-end;max-width:65%;background:var(--accent);color:#0a0a0a;padding:12px 18px;border-radius:18px 18px 4px 18px;font-size:14px;font-weight:600}
     .msg-agent-wrap{display:flex;gap:12px;align-items:flex-start}
@@ -206,14 +213,20 @@ data:
     .lc-agent{background:rgba(200,169,110,.12);color:var(--accent);border:1px solid rgba(200,169,110,.2)}
     .lc-system{background:rgba(59,130,246,.1);color:var(--blue);border:1px solid rgba(59,130,246,.2)}
     .lc-tool{background:rgba(167,139,250,.1);color:var(--purple);border:1px solid rgba(167,139,250,.2)}
+    .lc-final{background:rgba(34,197,94,.1);color:var(--green);border:1px solid rgba(34,197,94,.2)}
     .lc-time{font-size:11px;color:#444}
-    .log-card-body{font-size:13px;color:#ccc;line-height:1.6;font-family:monospace;white-space:pre-wrap;word-break:break-all}
-    .msg-final{background:#111;border:1px solid rgba(200,169,110,.2);border-radius:8px;padding:16px;font-size:14px;color:#e8e8e8;line-height:1.7}
-    .chat-input-wrap{display:flex;gap:10px;padding:16px 0 0;border-top:1px solid #1f1f1f;margin-top:16px}
+    .log-card-body{font-size:13px;color:#ccc;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+    .msg-final{background:#111;border:1px solid rgba(200,169,110,.2);border-radius:8px;padding:16px;font-size:14px;color:#e8e8e8;line-height:1.7;white-space:pre-wrap;word-break:break-word}
+    .thinking-dots{display:flex;gap:6px;padding:12px 0}
+    .thinking-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);opacity:.3;animation:pulse 1.2s infinite}
+    .thinking-dot:nth-child(2){animation-delay:.2s}
+    .thinking-dot:nth-child(3){animation-delay:.4s}
+    @keyframes pulse{0%,100%{opacity:.3}50%{opacity:1}}
+    .chat-input-wrap{display:flex;gap:10px;padding:16px 0 0;border-top:1px solid #1f1f1f;margin-top:8px}
     .chat-input{flex:1;background:#111;border:1px solid #2a2a2a;color:#e8e8e8;padding:12px 18px;border-radius:8px;font-size:14px;font-family:inherit;outline:none;transition:border-color .2s;height:48px}
     .chat-input:focus{border-color:var(--accent)}
     .chat-input::placeholder{color:#444}
-    .send-btn{background:linear-gradient(135deg,var(--accent),var(--accent-d));border:none;color:#0a0a0a;padding:12px 20px;border-radius:8px;cursor:pointer;font-weight:700;font-size:16px;transition:all .2s;flex-shrink:0}
+    .send-btn{background:linear-gradient(135deg,var(--accent),var(--accent-d));border:none;color:#0a0a0a;padding:12px 20px;border-radius:8px;cursor:pointer;font-weight:700;font-size:14px;transition:all .2s;flex-shrink:0}
     .send-btn:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(200,169,110,.3)}
     .send-btn:disabled{opacity:.4;cursor:default;transform:none}
     .main{max-width:1400px;margin:0 auto;padding:32px 40px}
@@ -315,13 +328,24 @@ data:
     <div id="panel-agent" style="display:none">
       <div class="chat-panel">
         <div class="chat-header">
-          <div class="chat-title">Multi Agent Console</div>
-          <div class="chat-sub">AI 에이전트에게 시스템 운영 질문을 하세요 (티켓 / SQS / Redis / EKS)</div>
+          <div>
+            <div class="chat-title">Multi Agent Console</div>
+            <div class="chat-sub">EKS · DB · Observe 전문가 에이전트에게 클러스터 운영 질문을 하세요</div>
+          </div>
+          <button class="diag-btn" id="diag-btn" onclick="runDiagnosis()">전체 자동 진단</button>
+        </div>
+        <div class="quick-actions">
+          <button class="qa-btn" onclick="quickSend('현재 EKS 클러스터 전체 상태를 진단해줘')">전체 클러스터 진단</button>
+          <button class="qa-btn" onclick="quickSend('지금 Pending 상태인 파드가 있어? 원인도 알려줘')">Pending 파드 확인</button>
+          <button class="qa-btn" onclick="quickSend('SQS 큐 깊이와 Worker 스케일 상태 알려줘')">SQS 큐 현황</button>
+          <button class="qa-btn" onclick="quickSend('Graviton 전환 시 비용 절감액 계산해줘')">비용 최적화 분석</button>
+          <button class="qa-btn" onclick="quickSend('DynamoDB에서 봇 트래픽 패턴 탐지해줘')">봇 트래픽 탐지</button>
+          <button class="qa-btn" onclick="quickSend('Karpenter 노드 현황과 CPU 한계 상태 확인해줘')">Karpenter 상태</button>
         </div>
         <div class="chat-messages" id="chat-messages"></div>
         <div class="chat-input-wrap">
-          <input class="chat-input" id="chat-input" placeholder="메시지를 입력하세요..." onkeydown="handleKey(event)">
-          <button class="send-btn" id="send-btn" onclick="sendMessage()">&#10148;</button>
+          <input class="chat-input" id="chat-input" placeholder="EKS 클러스터에 대해 질문하세요... (Enter: 전송)" onkeydown="handleKey(event)">
+          <button class="send-btn" id="send-btn" onclick="sendMessage()">전송</button>
         </div>
       </div>
     </div>
@@ -404,8 +428,24 @@ data:
       document.getElementById('panel-agent').style.display = tab === 'agent' ? '' : 'none';
     }
 
-    // ── 멀티에이전트 채팅 (mock) ─────────────────────────
+    // ── 멀티에이전트 채팅 (실제 API 연동) ────────────────
     var agentBusy = false;
+    // 에이전트 API 주소: 같은 도메인이면 상대경로, 아니면 직접 지정
+    var AGENT_API = window.AGENT_API_URL || 'https://constant-unviable-dispersal.ngrok-free.dev';
+
+    var AGENT_META = {
+      eks:     { label: 'EKS Agent',     type: 'agent',  tag: 'EKS' },
+      db:      { label: 'DB Agent',      type: 'tool',   tag: 'DB' },
+      observe: { label: 'Observe Agent', type: 'system', tag: 'Observe' },
+      final:   { label: '팀장 종합 판단', type: 'final',  tag: '팀장' }
+    };
+
+    function setAgentBusy(busy) {
+      agentBusy = busy;
+      document.getElementById('send-btn').disabled = busy;
+      document.getElementById('diag-btn').disabled = busy;
+      document.querySelectorAll('.qa-btn').forEach(function(b){ b.disabled = busy; });
+    }
 
     function handleKey(e) {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
@@ -437,10 +477,20 @@ data:
       return wrap.querySelector('.agent-body');
     }
 
+    function addThinking(body) {
+      var el = document.createElement('div');
+      el.className = 'thinking-dots';
+      el.id = 'thinking-indicator';
+      el.innerHTML = '<div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div>';
+      body.appendChild(el);
+      scrollBottom();
+      return el;
+    }
+
     function addProcessingToggle(body) {
       var tog = document.createElement('div');
       tog.className = 'processing-toggle';
-      tog.innerHTML = '<span class="chevron open">&#9660;</span><span>Processing...</span>';
+      tog.innerHTML = '<span class="chevron open">&#9660;</span><span>전문가 분석 과정</span>';
       var log = document.createElement('div');
       log.className = 'processing-log';
       tog.onclick = function() {
@@ -463,7 +513,8 @@ data:
     function addLogCard(container, type, tag, content) {
       var card = document.createElement('div');
       card.className = 'log-card';
-      card.innerHTML = '<div class="log-card-header"><div class="log-card-meta"><span class="lc-type">message</span><span class="lc-tag lc-' + type + '">[' + tag + ']</span></div><span class="lc-time">' + nowTime() + '</span></div><div class="log-card-body">' + content + '</div>';
+      var escaped = content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      card.innerHTML = '<div class="log-card-header"><div class="log-card-meta"><span class="lc-type">agent</span><span class="lc-tag lc-' + type + '">' + tag + '</span></div><span class="lc-time">' + nowTime() + '</span></div><div class="log-card-body">' + escaped + '</div>';
       container.appendChild(card);
       scrollBottom();
     }
@@ -471,80 +522,102 @@ data:
     function addFinalMsg(body, content) {
       var el = document.createElement('div');
       el.className = 'msg-final';
-      el.innerHTML = content;
+      el.textContent = content;
       body.appendChild(el);
       scrollBottom();
     }
 
-    var mockResponses = {
-      ticket: {
-        analysis: '티켓 잔여량 및 Redis 상태를 조회합니다.',
-        tool: 'GET /api/admin/stats\n→ redis.get("tickets_left")',
-        answer: '현재 티켓 잔여량을 Redis에서 조회했습니다.<br>&#128230; 남은 티켓: <span style="color:var(--accent);font-weight:700">실시간 연결 필요</span>'
-      },
-      sqs: {
-        analysis: 'SQS 큐 깊이를 확인합니다.',
-        tool: 'AWS SQS → GetQueueAttributes\n(ApproximateNumberOfMessages)',
-        answer: 'SQS 큐 상태를 확인했습니다.<br>&#128232; 대기 메시지: <span style="color:var(--blue);font-weight:700">실제 연결 후 표시</span>'
-      },
-      redis: {
-        analysis: 'Redis 연결 상태 및 메모리 사용량을 조회합니다.',
-        tool: 'redis.ping()\n→ redis.info("memory")',
-        answer: 'Redis 상태가 정상입니다.<br>&#9989; 연결: OK<br>&#128190; 메모리: 실시간 데이터 필요'
-      },
-      eks: {
-        analysis: 'EKS 클러스터 및 파드 상태를 조회합니다.',
-        tool: 'kubectl get pods -n y2ks\n→ kubectl top nodes',
-        answer: 'EKS 클러스터 상태를 점검했습니다.<br>&#128994; 파드 상태: 에이전트 연결 후 확인 가능'
-      },
-      default: {
-        analysis: '요청을 분석하고 적절한 에이전트를 선택합니다.',
-        tool: 'team-leader → routing to specialist agent',
-        answer: '안녕하세요! 현재 멀티에이전트 기능이 개발 중입니다.<br>티켓, SQS, Redis, EKS 등 시스템 운영 질문을 해보세요.'
-      }
-    };
+    function renderAgentResult(cards) {
+      var body = createAgentWrap();
+      var keys = Object.keys(cards);
+      var expertKeys = keys.filter(function(k){ return k !== 'final'; });
 
-    function getMock(text) {
-      var lower = text.toLowerCase();
-      if (lower.indexOf('티켓') >= 0 || lower.indexOf('ticket') >= 0) return mockResponses.ticket;
-      if (lower.indexOf('sqs') >= 0 || lower.indexOf('큐') >= 0) return mockResponses.sqs;
-      if (lower.indexOf('redis') >= 0) return mockResponses.redis;
-      if (lower.indexOf('eks') >= 0 || lower.indexOf('pod') >= 0 || lower.indexOf('파드') >= 0) return mockResponses.eks;
-      return mockResponses.default;
+      // 전문가가 여럿이면 processing log로 접을 수 있게
+      if (expertKeys.length > 0) {
+        var log = addProcessingToggle(body);
+        expertKeys.forEach(function(k) {
+          var meta = AGENT_META[k] || { label: k, type: 'agent', tag: k };
+          addLogCard(log, meta.type, meta.label, cards[k]);
+        });
+      }
+
+      // final: 단일 전문가면 그게 곧 최종 / 복수면 팀장 종합
+      var finalKey = keys.length === 1 ? keys[0] : 'final';
+      if (cards[finalKey]) {
+        // 단일 전문가 + final이 같으면 중복 안 보임
+        var isDup = expertKeys.length === 1 && cards[finalKey] === cards[expertKeys[0]];
+        if (!isDup) {
+          addFinalMsg(body, cards[finalKey]);
+        } else {
+          addFinalMsg(body, cards[expertKeys[0]]);
+        }
+      }
     }
 
-    function delay(ms) { return new Promise(function(r){ setTimeout(r, ms); }); }
+    function quickSend(text) {
+      if (agentBusy) return;
+      document.getElementById('chat-input').value = text;
+      sendMessage();
+    }
 
     async function sendMessage() {
       if (agentBusy) return;
       var input = document.getElementById('chat-input');
       var text = input.value.trim();
       if (!text) return;
-      agentBusy = true;
-      document.getElementById('send-btn').disabled = true;
+      setAgentBusy(true);
       input.value = '';
 
       appendUserMsg(text);
-      var mock = getMock(text);
       var body = createAgentWrap();
+      var thinking = addThinking(body);
 
-      await delay(800);
-      var log = addProcessingToggle(body);
+      try {
+        var res = await fetch(AGENT_API + '/api/query', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({message: text})
+        });
+        var data = await res.json();
+        thinking.remove();
+        if (data.ok && data.result) {
+          renderAgentResult(data.result);
+          // 이전 wrap 제거 (비어있으면)
+          if (!body.hasChildNodes()) body.parentElement.remove();
+        } else {
+          addFinalMsg(body, '오류: ' + (data.error || '알 수 없는 오류'));
+        }
+      } catch(e) {
+        thinking.remove();
+        addFinalMsg(body, '연결 오류: API 서버에 접속할 수 없습니다. (' + AGENT_API + ')');
+      }
 
-      await delay(700);
-      addLogCard(log, 'agent', 'team-leader', mock.analysis);
+      setAgentBusy(false);
+    }
 
-      await delay(1000);
-      addLogCard(log, 'tool', 'tool-call', mock.tool);
+    async function runDiagnosis() {
+      if (agentBusy) return;
+      setAgentBusy(true);
 
-      await delay(1200);
-      addLogCard(log, 'system', 'system', '작업이 완료되었습니다.');
+      appendUserMsg('전체 자동 진단 실행');
+      var body = createAgentWrap();
+      var thinking = addThinking(body);
 
-      await delay(400);
-      addFinalMsg(body, mock.answer);
+      try {
+        var res = await fetch(AGENT_API + '/api/auto-diagnosis', { method: 'POST' });
+        var data = await res.json();
+        thinking.remove();
+        if (data.ok && data.result) {
+          addFinalMsg(body, data.result);
+        } else {
+          addFinalMsg(body, '오류: ' + (data.error || '알 수 없는 오류'));
+        }
+      } catch(e) {
+        thinking.remove();
+        addFinalMsg(body, '연결 오류: API 서버에 접속할 수 없습니다. (' + AGENT_API + ')');
+      }
 
-      agentBusy = false;
-      document.getElementById('send-btn').disabled = false;
+      setAgentBusy(false);
     }
     </script>
     </body>

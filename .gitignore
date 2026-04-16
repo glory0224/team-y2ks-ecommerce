@@ -31,3 +31,11 @@ build/
 ### 5. AI Tool Metadata
 .kiro/
 .claude/
+
+### 6. Python
+__pycache__/
+*.pyc
+*.pyo
+agents/venv312/
+agents/venv/
+agents/final_report.md
