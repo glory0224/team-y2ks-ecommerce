@@ -40,7 +40,7 @@ AWS_REGION    = os.environ.get("AWS_REGION", "ap-northeast-2")
 DDB_TABLE     = os.environ.get("DDB_TABLE", "y2ks-coupon-claims")
 SQS_QUEUE_URL = os.environ.get("SQS_QUEUE_URL", "")
 SLACK_WEBHOOK = os.environ.get("SLACK_WEBHOOK_URL", "")
-MAX_OUT       = 3000
+MAX_OUT       = 8000
 
 # ── 모델 ─────────────────────────────────────────────────────
 ORCHESTRATOR_MODEL = BedrockModel(
@@ -48,7 +48,7 @@ ORCHESTRATOR_MODEL = BedrockModel(
     region_name=AWS_REGION,
 )
 SPECIALIST_MODEL = BedrockModel(
-    model_id="apac.anthropic.claude-3-haiku-20240307-v1:0",
+    model_id="apac.anthropic.claude-sonnet-4-20250514-v1:0",
     region_name=AWS_REGION,
 )
 
@@ -67,12 +67,67 @@ def _kubectl(*args) -> str:
 @tool
 def get_all_pods() -> str:
     """전체 네임스페이스의 파드 목록과 상태를 조회합니다."""
-    output = _kubectl("get", "pods", "-A", "-o", "wide")
+    # MAX_OUT 제한 없이 직접 호출 (잘리면 집계가 틀림)
+    try:
+        r = subprocess.run(
+            ["kubectl", "get", "pods", "-A", "-o",
+             "custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,READY:.status.containerStatuses[0].ready,STATUS:.status.phase,RESTARTS:.status.containerStatuses[0].restartCount,NODE:.spec.nodeName"],
+            capture_output=True, text=True, timeout=20
+        )
+        output = r.stdout or r.stderr or "(출력 없음)"
+    except Exception as e:
+        return f"오류: {e}"
     lines = [l for l in output.strip().split("\n") if l]
-    total   = len(lines) - 1 if lines else 0
-    running = sum(1 for l in lines if "Running" in l)
-    pending = sum(1 for l in lines if "Pending" in l)
-    return output + f"\n\n[요약] 전체: {total}개, Running: {running}개, Pending: {pending}개"
+    data_lines = lines[1:] if len(lines) > 1 else []
+
+    total   = len(data_lines)
+    running = 0
+    pending = 0
+    not_ready = []
+    restart_pods = []
+    node_counts: dict = {}
+    ns_counts: dict = {}
+
+    for l in data_lines:
+        parts = l.split()
+        if len(parts) < 5:
+            continue
+        ready_col   = parts[2]   # true / false / <none>
+        status_col  = parts[3]   # Running / Pending / etc
+        restart_col = parts[4]   # 숫자
+        node_col    = parts[5] if len(parts) > 5 else "unknown"
+
+        if status_col == "Running":
+            running += 1
+        elif status_col == "Pending":
+            pending += 1
+
+        # READY 이상: false 또는 <none>
+        if ready_col in ("false", "<none>"):
+            not_ready.append(f"  {parts[0]}/{parts[1]} READY={ready_col} STATUS={status_col}")
+
+        # 재시작 횟수
+        restarts = int(restart_col) if restart_col.isdigit() else 0
+        if restarts > 0:
+            restart_pods.append(f"  {parts[0]}/{parts[1]} RESTARTS={restarts}")
+
+        node_counts[node_col] = node_counts.get(node_col, 0) + 1
+        ns_counts[parts[0]] = ns_counts.get(parts[0], 0) + 1
+
+    node_summary = "\n".join(f"  {node}: {cnt}개" for node, cnt in sorted(node_counts.items()))
+    ns_summary   = "\n".join(f"  {ns}: {cnt}개" for ns, cnt in sorted(ns_counts.items()))
+    issues = ""
+    if not_ready:
+        issues += f"\n[READY 이상 - 즉시 확인 필요] {len(not_ready)}개:\n" + "\n".join(not_ready)
+    if restart_pods:
+        issues += f"\n[재시작 감지 - 불안정] {len(restart_pods)}개:\n" + "\n".join(restart_pods)
+
+    return (output +
+            f"\n\n=== 집계 결과 (LLM 판단 불필요, 이 수치 그대로 사용) ==="
+            f"\n전체: {total}개  Running: {running}개  Pending: {pending}개"
+            f"\n\n[노드별 파드 수]\n{node_summary}"
+            f"\n\n[네임스페이스별 파드 수]\n{ns_summary}"
+            + issues)
 
 @tool
 def get_nodes() -> str:
@@ -82,7 +137,40 @@ def get_nodes() -> str:
 @tool
 def get_node_resources() -> str:
     """노드별 CPU/메모리 실시간 사용량을 조회합니다."""
-    return _kubectl("top", "nodes")
+    # kubectl top nodes 컬럼: NAME(0) CPU(cores)(1) CPU%(2) MEMORY(bytes)(3) MEMORY%(4)
+    output = _kubectl("top", "nodes")
+    lines = [l for l in output.strip().split("\n") if l]
+    data_lines = lines[1:] if len(lines) > 1 else []
+
+    warnings = []
+    summary_lines = []
+    for l in data_lines:
+        parts = l.split()
+        if len(parts) < 5:
+            continue
+        node       = parts[0]
+        cpu_pct    = parts[2].replace("%", "")
+        mem_pct    = parts[4].replace("%", "")
+        summary_lines.append(f"  {node}: CPU={parts[1]}({parts[2]}) MEM={parts[3]}({parts[4]})")
+        try:
+            if int(cpu_pct) >= 80:
+                warnings.append(f"  [CPU Critical] {node} CPU {cpu_pct}% - 즉시 스케일 아웃 필요")
+            elif int(cpu_pct) >= 60:
+                warnings.append(f"  [CPU Warning] {node} CPU {cpu_pct}%")
+            if int(mem_pct) >= 85:
+                warnings.append(f"  [MEM Critical] {node} MEM {mem_pct}% - OOM 위험")
+            elif int(mem_pct) >= 70:
+                warnings.append(f"  [MEM Warning] {node} MEM {mem_pct}%")
+        except ValueError:
+            pass
+
+    result = output + "\n\n=== 노드 리소스 판정 ==="
+    result += "\n" + "\n".join(summary_lines)
+    if warnings:
+        result += "\n\n[경고]\n" + "\n".join(warnings)
+    else:
+        result += "\n\n[판정] 전체 노드 리소스 정상 범위"
+    return result
 
 @tool
 def get_pod_resources() -> str:
@@ -323,15 +411,26 @@ EKS_SWARM_PROMPT = """당신은 EKS Agent — Y2KS 클러스터 운영 전문가
 담당 영역: kubectl + KEDA + Karpenter + SQS
 """ + ARCH_CONTEXT + """
 ## 도구 선택 전략
+- 파드 개수/상태 질문 → get_all_pods 반드시 사용 (전체 네임스페이스 포함)
 - Pending 파드 → get_pending_pods → describe_pod(Events 확인) 순서
 - 전체 진단 → get_all_pods → get_node_resources 순서
 - 2~3개 툴만 선택, 불필요한 중복 호출 금지
 
+## 파드 집계 규칙
+- 노드별 파드 수 = kube-system, monitoring, keda, karpenter, default 등 모든 네임스페이스 파드 전부 합산
+- 시스템 파드(kube-system, monitoring 등)도 파드 수에 포함, 절대 제외하지 말 것
+- 노드별 파드 수를 직접 세어서 숫자로 명시할 것
+- READY가 0/N이거나 RESTARTS 1 이상인 파드는 반드시 이상으로 보고
+- "Pending 없음 = 정상" 판단 금지 — READY/RESTARTS 컬럼 전체 확인 필수
+
 ## 판단 기준
-- Running 아닌 파드 → Critical, Events까지 반드시 확인
+- READY가 0/1 또는 재시작 횟수 1회 이상인 파드 → Critical, describe_pod로 Events 확인 필수
+- CrashLoopBackOff / OOMKilled / Error 상태 → Critical
 - Pending → 노드 CPU 여유 계산 후 근본원인 파악
+- get_all_pods 결과에서 READY 컬럼이 완전하지 않은 파드 모두 이상으로 판단
 - SQS 큐 100건 이상 → Worker 스케일 부족
 - Karpenter CPU 18코어 이상 → 한계 근접 경고
+- "Pending 없음"으로 정상 판단 금지 — READY, RESTARTS 컬럼까지 반드시 확인
 
 ## 핸드오프 기준 (Sherlock 스타일)
 - 파드 이상 + 데이터 정합성 의심 → DB Agent에게 핸드오프
@@ -482,6 +581,10 @@ ROUTER_PROMPT = """당신은 Y2KS 멀티에이전트 라우터입니다.
 
 복합 영역:
 - "파드 몇 개고 CPU 상태는" → ["eks","observe"]
+- "cpu 상태랑 부하랑 pending이랑 노드 상태" → ["eks","observe"]
+- "노드 상태랑 파드 상태 점검" → ["eks","observe"]
+- "cpu 부하 pending 노드 전체 점검" → ["eks","observe"]
+- "클러스터 전반적인 상태 다 봐줘" → ["eks","observe"]
 - "파드 상태랑 DB 내용도 알려줘" → ["eks","db"]
 - "CPU 상태랑 당첨자 현황" → ["observe","db"]
 - "온디맨드 스팟 파드 몇 개고 CPU 상태랑 DB에 뭐 담겼는지" → ["eks","observe","db"]

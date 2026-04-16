@@ -311,7 +311,14 @@ function Message({ msg }) {
           <div className="bubble user">{msg.content}</div>
         ) : msg.cards ? (
           <div className="agent-cards">
-            {Object.entries(msg.cards).map(([k, v]) => (
+            {Object.entries(msg.cards).filter(([k, v]) => {
+              // 단일 전문가일 때 final이 전문가 결과와 동일하면 숨김
+              if (k === 'final') {
+                const experts = Object.entries(msg.cards).filter(([ek]) => ek !== 'final');
+                if (experts.length === 1 && experts[0][1] === v) return false;
+              }
+              return true;
+            }).map(([k, v]) => (
               <AgentCard key={k} agentKey={k} content={v} />
             ))}
           </div>
