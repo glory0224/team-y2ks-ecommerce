@@ -30,7 +30,7 @@ spec:
         image: nginx:alpine
         resources:
           requests:
-            cpu: 400m
+            cpu: 300m
             memory: 400Mi
           limits:
             cpu: 500m
