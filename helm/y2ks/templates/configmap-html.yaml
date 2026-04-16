@@ -178,9 +178,44 @@ data:
     .logo{font-size:22px;font-weight:800;letter-spacing:8px;color:#fff}
     .logo span{color:var(--accent);font-size:12px;font-weight:400;letter-spacing:3px;margin-left:12px;vertical-align:middle}
     .header-right{display:flex;align-items:center;gap:16px}
-    .reset-btn{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:var(--red);padding:8px 18px;border-radius:6px;font-size:13px;font-family:inherit;cursor:pointer;transition:all .2s}
-    .reset-btn:hover{background:rgba(239,68,68,.2)}
     .last-updated{font-size:12px;color:#555}
+    .tabs{display:flex;border-bottom:1px solid #1f1f1f;padding:0 40px;background:#0a0a0a}
+    .tab-btn{padding:16px 20px;font-size:13px;font-family:inherit;background:none;border:none;border-bottom:2px solid transparent;color:#555;cursor:pointer;transition:all .2s;letter-spacing:.5px}
+    .tab-btn.active{color:var(--accent);border-bottom-color:var(--accent)}
+    .tab-btn:hover:not(.active){color:#e8e8e8}
+    .chat-panel{display:flex;flex-direction:column;height:calc(100vh - 130px);max-width:1000px;margin:0 auto;padding:24px 40px}
+    .chat-header{margin-bottom:20px}
+    .chat-title{font-size:13px;letter-spacing:2px;color:#555;text-transform:uppercase}
+    .chat-sub{font-size:12px;color:#333;margin-top:4px}
+    .chat-messages{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:16px;padding-right:4px}
+    .msg-user{align-self:flex-end;max-width:65%;background:var(--accent);color:#0a0a0a;padding:12px 18px;border-radius:18px 18px 4px 18px;font-size:14px;font-weight:600}
+    .msg-agent-wrap{display:flex;gap:12px;align-items:flex-start}
+    .agent-icon{width:32px;height:32px;border-radius:50%;background:#111;border:1px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--accent);flex-shrink:0;letter-spacing:1px;font-weight:700}
+    .agent-body{flex:1}
+    .processing-toggle{display:flex;align-items:center;gap:8px;cursor:pointer;color:#555;font-size:13px;padding:8px 0;user-select:none}
+    .processing-toggle:hover{color:#e8e8e8}
+    .chevron{transition:transform .2s;font-size:10px}
+    .chevron.open{transform:rotate(0deg)}
+    .chevron.closed{transform:rotate(-90deg)}
+    .processing-log{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+    .log-card{background:#111;border:1px solid #1f1f1f;border-radius:8px;padding:12px 16px}
+    .log-card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+    .log-card-meta{display:flex;align-items:center;gap:8px}
+    .lc-type{font-size:11px;color:#9e9e9e;font-weight:600}
+    .lc-tag{font-size:11px;padding:2px 8px;border-radius:3px;font-weight:600}
+    .lc-agent{background:rgba(200,169,110,.12);color:var(--accent);border:1px solid rgba(200,169,110,.2)}
+    .lc-system{background:rgba(59,130,246,.1);color:var(--blue);border:1px solid rgba(59,130,246,.2)}
+    .lc-tool{background:rgba(167,139,250,.1);color:var(--purple);border:1px solid rgba(167,139,250,.2)}
+    .lc-time{font-size:11px;color:#444}
+    .log-card-body{font-size:13px;color:#ccc;line-height:1.6;font-family:monospace;white-space:pre-wrap;word-break:break-all}
+    .msg-final{background:#111;border:1px solid rgba(200,169,110,.2);border-radius:8px;padding:16px;font-size:14px;color:#e8e8e8;line-height:1.7}
+    .chat-input-wrap{display:flex;gap:10px;padding:16px 0 0;border-top:1px solid #1f1f1f;margin-top:16px}
+    .chat-input{flex:1;background:#111;border:1px solid #2a2a2a;color:#e8e8e8;padding:12px 18px;border-radius:8px;font-size:14px;font-family:inherit;outline:none;transition:border-color .2s;height:48px}
+    .chat-input:focus{border-color:var(--accent)}
+    .chat-input::placeholder{color:#444}
+    .send-btn{background:linear-gradient(135deg,var(--accent),var(--accent-d));border:none;color:#0a0a0a;padding:12px 20px;border-radius:8px;cursor:pointer;font-weight:700;font-size:16px;transition:all .2s;flex-shrink:0}
+    .send-btn:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(200,169,110,.3)}
+    .send-btn:disabled{opacity:.4;cursor:default;transform:none}
     .main{max-width:1400px;margin:0 auto;padding:32px 40px}
     .stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:32px}
     @media(max-width:900px){.stats-grid{grid-template-columns:repeat(2,1fr)}}
@@ -220,10 +255,13 @@ data:
       <div class="logo">Y2KS <span>ADMIN</span></div>
       <div class="header-right">
         <span class="last-updated" id="last-updated">-</span>
-        <button class="reset-btn" onclick="resetTickets()">티켓 초기화</button>
       </div>
     </header>
-    
+    <nav class="tabs">
+      <button class="tab-btn active" onclick="switchTab(event,'stats')">이벤트 통계</button>
+      <button class="tab-btn" onclick="switchTab(event,'agent')">멀티 에이전트</button>
+    </nav>
+
     <div id="panel-events">
     <main class="main">
       <div class="stats-grid">
@@ -273,7 +311,21 @@ data:
       </div>
     </main>
     </div>
-    
+
+    <div id="panel-agent" style="display:none">
+      <div class="chat-panel">
+        <div class="chat-header">
+          <div class="chat-title">Multi Agent Console</div>
+          <div class="chat-sub">AI 에이전트에게 시스템 운영 질문을 하세요 (티켓 / SQS / Redis / EKS)</div>
+        </div>
+        <div class="chat-messages" id="chat-messages"></div>
+        <div class="chat-input-wrap">
+          <input class="chat-input" id="chat-input" placeholder="메시지를 입력하세요..." onkeydown="handleKey(event)">
+          <button class="send-btn" id="send-btn" onclick="sendMessage()">&#10148;</button>
+        </div>
+      </div>
+    </div>
+
     <div class="toast" id="toast"></div>
     <script>
     // ── 토스트 ──────────────────────────────────────────
@@ -341,18 +393,159 @@ data:
       await Promise.all([loadStats(), loadClaims()]);
     }
     
-    async function resetTickets() {
-      if (!confirm('티켓을 100장으로 초기화하시겠습니까?')) return;
-      try {
-        var res = await fetch('/api/admin/reset', {method: 'POST'});
-        var d = await res.json();
-        showToast(d.message);
-        loadStats();
-      } catch(e) { showToast('초기화 실패'); }
-    }
-    
     loadAll();
     setInterval(loadAll, 3000);
+
+    // ── 탭 전환 ─────────────────────────────────────────
+    function switchTab(e, tab) {
+      document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.remove('active'); });
+      e.target.classList.add('active');
+      document.getElementById('panel-events').style.display = tab === 'stats' ? '' : 'none';
+      document.getElementById('panel-agent').style.display = tab === 'agent' ? '' : 'none';
+    }
+
+    // ── 멀티에이전트 채팅 (mock) ─────────────────────────
+    var agentBusy = false;
+
+    function handleKey(e) {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    }
+
+    function nowTime() {
+      return new Date().toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+    }
+
+    function scrollBottom() {
+      var msgs = document.getElementById('chat-messages');
+      msgs.scrollTop = msgs.scrollHeight;
+    }
+
+    function appendUserMsg(text) {
+      var el = document.createElement('div');
+      el.className = 'msg-user';
+      el.textContent = text;
+      document.getElementById('chat-messages').appendChild(el);
+      scrollBottom();
+    }
+
+    function createAgentWrap() {
+      var wrap = document.createElement('div');
+      wrap.className = 'msg-agent-wrap';
+      wrap.innerHTML = '<div class="agent-icon">AI</div><div class="agent-body"></div>';
+      document.getElementById('chat-messages').appendChild(wrap);
+      scrollBottom();
+      return wrap.querySelector('.agent-body');
+    }
+
+    function addProcessingToggle(body) {
+      var tog = document.createElement('div');
+      tog.className = 'processing-toggle';
+      tog.innerHTML = '<span class="chevron open">&#9660;</span><span>Processing...</span>';
+      var log = document.createElement('div');
+      log.className = 'processing-log';
+      tog.onclick = function() {
+        var c = tog.querySelector('.chevron');
+        if (log.style.display === 'none') {
+          log.style.display = '';
+          c.className = 'chevron open';
+          c.innerHTML = '&#9660;';
+        } else {
+          log.style.display = 'none';
+          c.className = 'chevron closed';
+          c.innerHTML = '&#9654;';
+        }
+      };
+      body.appendChild(tog);
+      body.appendChild(log);
+      return log;
+    }
+
+    function addLogCard(container, type, tag, content) {
+      var card = document.createElement('div');
+      card.className = 'log-card';
+      card.innerHTML = '<div class="log-card-header"><div class="log-card-meta"><span class="lc-type">message</span><span class="lc-tag lc-' + type + '">[' + tag + ']</span></div><span class="lc-time">' + nowTime() + '</span></div><div class="log-card-body">' + content + '</div>';
+      container.appendChild(card);
+      scrollBottom();
+    }
+
+    function addFinalMsg(body, content) {
+      var el = document.createElement('div');
+      el.className = 'msg-final';
+      el.innerHTML = content;
+      body.appendChild(el);
+      scrollBottom();
+    }
+
+    var mockResponses = {
+      ticket: {
+        analysis: '티켓 잔여량 및 Redis 상태를 조회합니다.',
+        tool: 'GET /api/admin/stats\n→ redis.get("tickets_left")',
+        answer: '현재 티켓 잔여량을 Redis에서 조회했습니다.<br>&#128230; 남은 티켓: <span style="color:var(--accent);font-weight:700">실시간 연결 필요</span>'
+      },
+      sqs: {
+        analysis: 'SQS 큐 깊이를 확인합니다.',
+        tool: 'AWS SQS → GetQueueAttributes\n(ApproximateNumberOfMessages)',
+        answer: 'SQS 큐 상태를 확인했습니다.<br>&#128232; 대기 메시지: <span style="color:var(--blue);font-weight:700">실제 연결 후 표시</span>'
+      },
+      redis: {
+        analysis: 'Redis 연결 상태 및 메모리 사용량을 조회합니다.',
+        tool: 'redis.ping()\n→ redis.info("memory")',
+        answer: 'Redis 상태가 정상입니다.<br>&#9989; 연결: OK<br>&#128190; 메모리: 실시간 데이터 필요'
+      },
+      eks: {
+        analysis: 'EKS 클러스터 및 파드 상태를 조회합니다.',
+        tool: 'kubectl get pods -n y2ks\n→ kubectl top nodes',
+        answer: 'EKS 클러스터 상태를 점검했습니다.<br>&#128994; 파드 상태: 에이전트 연결 후 확인 가능'
+      },
+      default: {
+        analysis: '요청을 분석하고 적절한 에이전트를 선택합니다.',
+        tool: 'team-leader → routing to specialist agent',
+        answer: '안녕하세요! 현재 멀티에이전트 기능이 개발 중입니다.<br>티켓, SQS, Redis, EKS 등 시스템 운영 질문을 해보세요.'
+      }
+    };
+
+    function getMock(text) {
+      var lower = text.toLowerCase();
+      if (lower.indexOf('티켓') >= 0 || lower.indexOf('ticket') >= 0) return mockResponses.ticket;
+      if (lower.indexOf('sqs') >= 0 || lower.indexOf('큐') >= 0) return mockResponses.sqs;
+      if (lower.indexOf('redis') >= 0) return mockResponses.redis;
+      if (lower.indexOf('eks') >= 0 || lower.indexOf('pod') >= 0 || lower.indexOf('파드') >= 0) return mockResponses.eks;
+      return mockResponses.default;
+    }
+
+    function delay(ms) { return new Promise(function(r){ setTimeout(r, ms); }); }
+
+    async function sendMessage() {
+      if (agentBusy) return;
+      var input = document.getElementById('chat-input');
+      var text = input.value.trim();
+      if (!text) return;
+      agentBusy = true;
+      document.getElementById('send-btn').disabled = true;
+      input.value = '';
+
+      appendUserMsg(text);
+      var mock = getMock(text);
+      var body = createAgentWrap();
+
+      await delay(800);
+      var log = addProcessingToggle(body);
+
+      await delay(700);
+      addLogCard(log, 'agent', 'team-leader', mock.analysis);
+
+      await delay(1000);
+      addLogCard(log, 'tool', 'tool-call', mock.tool);
+
+      await delay(1200);
+      addLogCard(log, 'system', 'system', '작업이 완료되었습니다.');
+
+      await delay(400);
+      addFinalMsg(body, mock.answer);
+
+      agentBusy = false;
+      document.getElementById('send-btn').disabled = false;
+    }
     </script>
     </body>
     </html>
