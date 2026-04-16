@@ -8,6 +8,11 @@ metadata:
     app: cart
 spec:
   replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   selector:
     matchLabels:
       app: cart
@@ -31,7 +36,7 @@ spec:
         resources:
           requests:
             cpu: 300m
-            memory: 350Mi
+            memory: 300Mi
           limits:
             cpu: 500m
             memory: 450Mi
