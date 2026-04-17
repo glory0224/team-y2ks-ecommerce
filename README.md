@@ -49,7 +49,6 @@ KEDA + Karpenter로 트래픽 스파이크를 자동 대응하며, Terraform 한
 | Karpenter | 부하 시 EC2 노드 자동 프로비저닝/제거 | Karpenter v1.1.1 |
 | Prometheus | 파드/노드 메트릭 수집 | kube-prometheus-stack |
 | Grafana | KEDA / Karpenter / k6 대시보드 시각화 | Grafana (monitoring 네임스페이스) |
-| Athena | 쿠폰 발급 로그 분석 | AWS Athena + Glue |
 | k6 | 선착순 이벤트 부하 테스트 | k6 Job (EKS 내 실행) |
 
 ---
@@ -70,8 +69,6 @@ KEDA + Karpenter로 트래픽 스파이크를 자동 대응하며, Terraform 한
 │   ├── dynamodb.tf             # DynamoDB 쿠폰 클레임 테이블
 │   ├── sqs.tf                  # SQS 큐 (y2ks-queue)
 │   ├── ecr.tf                  # ECR 리포지토리 + Docker 이미지 빌드/푸시 자동화
-│   ├── athena.tf               # Athena 워크그룹 + Glue 카탈로그
-│   ├── s3-athena.tf            # Athena 결과 저장용 S3 버킷
 │   ├── github-oidc.tf          # GitHub Actions OIDC (k6 부하테스트용)
 │   └── outputs.tf              # 배포 후 참조값 출력 + next_steps 안내
 │
@@ -149,7 +146,7 @@ terraform apply
 
 `terraform apply` 한 번으로 아래가 모두 자동 실행됩니다:
 
-- VPC / EKS 클러스터 / IAM / DynamoDB / SQS / Athena / S3 생성
+- VPC / EKS 클러스터 / IAM / DynamoDB / SQS / S3 생성
 - ECR 리포지토리 생성 + Dockerfile 기반 이미지 빌드 & ECR 푸시
 - 팀원 IAM 유저에게 kubectl 접근 권한 자동 부여
 - kubeconfig 자동 업데이트
@@ -320,4 +317,4 @@ terraform destroy
 2. Y2KS 앱 삭제 → ELB 삭제 확인
 3. Karpenter / KEDA / Prometheus Helm 삭제
 4. ECR 이미지 및 리포지토리 삭제
-5. EKS 클러스터 / 노드그룹 / IAM / VPC / S3 / Athena 삭제
+5. EKS 클러스터 / 노드그룹 / IAM / VPC / S3 삭제

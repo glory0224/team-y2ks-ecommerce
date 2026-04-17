@@ -10,7 +10,7 @@ Orchestrator (오케스트레이터)
 OpsCommander  DataSherlock  DevOpsGuru
 (EKS 팀장)  (데이터 분석가) (데브옵스 전문가)
     ↓              ↓            ↓
- kubectl        Athena      Prometheus
+ kubectl      DynamoDB      Prometheus
  Karpenter     DynamoDB     Cost API
 ```
 
@@ -43,7 +43,6 @@ Worker 파드 다수 Pending 감지
 
 **Tools**:
 - `query_dynamodb_stats()`: 당첨자/낙첨자 수 조회
-- `query_athena_logs()`: S3 로그 Athena SQL 쿼리
 - `detect_bot_pattern()`: 닉네임 패턴 분석 (user_VU_ITER 형태)
 - `get_participation_timeline()`: 시간대별 참여 추이 분석
 
@@ -71,20 +70,7 @@ DynamoDB에서 닉네임 패턴 분석
 **Tools**:
 - `get_prometheus_metrics()`: Prometheus API로 메트릭 조회
 - `analyze_resource_usage()`: CPU/메모리 실사용률 분석
-- `graviton_migration_plan()`: Graviton 전환 계획 생성
-- `calculate_cost_saving()`: 비용 절감액 계산
-
-**Graviton 전환 계획**:
-```
-현재: t3.medium (x86_64) → 목표: t4g.medium (ARM64)
-현재: amd64 Spot → 목표: arm64 Spot
-
-변경 필요:
-1. Dockerfile: --platform=linux/arm64
-2. Karpenter NodePool: arm64 추가
-3. ECR: ARM64 이미지 빌드/푸시
-예상 절감: ~30% (t4g가 t3 대비 약 20% 저렴 + Spot 할인)
-```
+- `calculate_cost_saving()`: OnDemand vs Spot 비용 절감액 계산
 
 ---
 
@@ -97,7 +83,7 @@ DynamoDB에서 닉네임 패턴 분석
 
 ### Phase 2: 에이전트 구현
 - OpsCommander: kubectl 기반 Tool
-- DataSherlock: boto3 기반 DynamoDB/Athena Tool
+- DataSherlock: boto3 기반 DynamoDB Tool
 - DevOpsGuru: Prometheus HTTP API Tool
 
 ### Phase 3: 오케스트레이션
@@ -109,11 +95,6 @@ DynamoDB에서 닉네임 패턴 분석
 - Streamlit 챗봇 UI
 - 실시간 메트릭 시각화
 - 에이전트 대화 히스토리 표시
-
-### Phase 5: Graviton 전환
-- Dockerfile.frontend, Dockerfile.worker ARM64 빌드 설정
-- Karpenter NodePool arm64 추가
-- GitHub Actions ARM64 빌드 워크플로우
 
 ---
 
@@ -138,11 +119,11 @@ DynamoDB에서 닉네임 패턴 분석
 목표: 60초 이내
 ```
 
-### 비용 30% 절감
+### 비용 절감
 ```
-계산: (t3.medium 시간당 비용 - t4g.medium 시간당 비용) / t3.medium
+계산: (t3.medium OnDemand - t3.medium Spot) / t3.medium OnDemand
 ap-northeast-2 기준:
   t3.medium On-Demand: $0.052/h
-  t4g.medium On-Demand: $0.0416/h
-  절감률: 약 20% (Spot 포함 시 추가 절감)
+  t3.medium Spot (평균): $0.0156/h
+  절감률: 약 70%
 ```

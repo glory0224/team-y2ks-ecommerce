@@ -270,7 +270,7 @@ const { useState, useRef, useEffect, useCallback } = React;
 const AGENTS = [
   { key: 'eks',     label: 'EKS Agent',     color: '#58a6ff', desc: 'kubectl · KEDA · Karpenter · SQS' },
   { key: 'db',      label: 'DB Agent',       color: '#3fb950', desc: 'DynamoDB · 봇탐지 · 참여분석' },
-  { key: 'observe', label: 'Observe Agent',  color: '#f0883e', desc: '리소스 · 비용 · Graviton' },
+  { key: 'observe', label: 'Observe Agent',  color: '#f0883e', desc: '리소스 · 비용 · 성능' },
   { key: 'final',   label: '팀장 종합 판단', color: '#bc8cff', desc: '교차분석 · 근본원인 · 우선순위' },
 ];
 
@@ -278,7 +278,7 @@ const QUICK = [
   { icon: '[진단]', label: '전체 클러스터 진단',   msg: '현재 EKS 클러스터 전체 상태를 진단해줘' },
   { icon: '[파드]', label: 'Pending 파드 확인',   msg: '지금 Pending 상태인 파드가 있어? 원인도 알려줘' },
   { icon: '[SQS]',  label: 'SQS 큐 현황',         msg: 'SQS 큐 깊이와 Worker 스케일 상태 알려줘' },
-  { icon: '[비용]', label: '비용 최적화 분석',     msg: 'Graviton 전환 시 비용 절감액 계산해줘' },
+  { icon: '[비용]', label: '비용 최적화 분석',     msg: 'OnDemand 대비 Spot 전환 시 비용 절감액 계산해줘' },
   { icon: '[봇]',   label: '봇 트래픽 탐지',       msg: 'DynamoDB에서 봇 트래픽 패턴 탐지해줘' },
   { icon: '[K8s]',  label: 'Karpenter 상태',      msg: 'Karpenter 노드 현황과 CPU 한계 상태 확인해줘' },
 ];

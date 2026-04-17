@@ -46,7 +46,7 @@
 | Router | Claude Sonnet 4.6 | 질문 분석 → 전문가 선택 |
 | EKS Agent | Claude Haiku 3 | kubectl / KEDA / Karpenter / SQS |
 | DB Agent | Claude Haiku 3 | DynamoDB / 봇 탐지 / 참여 분석 |
-| Observe Agent | Claude Haiku 3 | 리소스 / 비용 / Graviton |
+| Observe Agent | Claude Haiku 3 | 리소스 / 비용 / 성능 |
 | Orchestrator | Claude Sonnet 4.6 | Swarm 결과 교차 분석 + 최종 판단 |
 
 ### 설계 근거
@@ -217,7 +217,7 @@ SPECIALIST_MODEL = BedrockModel(
 |--------|------|------|
 | `get_node_resources()` | kubectl top | 노드 리소스 |
 | `get_pod_resources()` | kubectl top | 파드 리소스 |
-| `calculate_cost_savings()` | 계산 | Graviton 비용 절감 |
+| `calculate_cost_savings()` | 계산 | OnDemand vs Spot 비용 절감 |
 
 ### 5.3 라우팅 로직
 
@@ -235,7 +235,7 @@ def _route(question: str) -> list:
 ```
 eks     → 파드/노드/KEDA/Karpenter/SQS/클러스터/로그/Pending/스케일링/장애
 db      → 당첨자/낙첨자/봇/응모/DynamoDB/쿠폰/참여자/데이터
-observe → CPU/메모리/비용/Graviton/성능/리소스/절감/모니터링
+observe → CPU/메모리/비용/성능/리소스/절감/모니터링
 ```
 
 ### 5.4 Swarm 패턴

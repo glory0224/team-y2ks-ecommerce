@@ -18,7 +18,6 @@
 - **SQS**: 비동기 쿠폰 처리 큐 (Standard Queue)
 - **DynamoDB**: 테이블 `y2ks-coupon-claims` (PK: request_id = nickname)
 - **ECR**: y2ks-frontend, y2ks-worker 이미지 저장소
-- **S3 + Athena**: 이벤트 로그 분석용 (terraform 구성 완료)
 
 ### 모니터링
 - Prometheus (kube-prometheus-stack, EBS PVC 5Gi)
@@ -48,15 +47,9 @@
 
 ### 2. 비용 최적화 여지
 - 현재 모든 노드 x86_64 (amd64)
-- Graviton (ARM64) 전환 시 약 20~30% 비용 절감 가능
 - Spot 노드 최대 CPU 20코어 제한 → 피크 시 병목 가능성
 
-### 3. 데이터 분석 파이프라인 미구축
-- DynamoDB 데이터 S3 export 미구현
-- Athena 테이블/쿼리 미활용
-- 이벤트 사후 분석 불가
-
-### 4. 보안
+### 3. 보안
 - DynamoDB VPC Endpoint 미적용 (인터넷 경유)
 - Admin 페이지 인증 없음
 
@@ -69,12 +62,7 @@
 - **목표**: 에이전트 자동 감지 → 자동 복구 액션 (1분 이내)
 - **측정**: MTTR (Mean Time To Recovery) 단축
 
-### 2. Graviton 전환을 통한 비용 30% 절감
-- **현재**: t3.medium (x86_64) 온디맨드 + Spot amd64
-- **목표**: t4g.medium (ARM64) 온디맨드 + Spot arm64
-- **측정**: AWS Cost Explorer 월별 EC2 비용 비교
-
-### 3. 멀티 에이전트 자율 운영
+### 2. 멀티 에이전트 자율 운영
 - EKS 상태 자동 진단
 - 이상 트래픽 자동 탐지
 - 운영 보고서 자동 생성
@@ -86,5 +74,5 @@
 | 에이전트 | 역할 | 담당 도구 |
 |---|---|---|
 | **OpsCommander** (EKS 팀장) | 클러스터 상태 총괄, 장애 대응 지시 | kubectl, Karpenter API |
-| **DataSherlock** (데이터 분석가) | 이벤트 로그 분석, 봇 탐지 | Athena, DynamoDB |
+| **DataSherlock** (데이터 분석가) | 이벤트 로그 분석, 봇 탐지 | DynamoDB |
 | **DevOpsGuru** (데브옵스 전문가) | 비용 최적화, 배포 전략 | Prometheus, Cost API |

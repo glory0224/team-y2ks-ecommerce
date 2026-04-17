@@ -121,7 +121,7 @@ r"^(user_\d+_\d+|VU_\d+|vu\d+|test_?\d+)$"
 - 노드 CPU 80% 초과 → 즉시 스케일 아웃 권고
 - 노드 메모리 85% 초과 → OOM 위험, 즉시 조치
 - 파드 CPU가 limits의 90% 도달 → throttling 발생 가능
-- Graviton 전환 시 20%+ 절감 → 마이그레이션 권고
+- OnDemand → Spot 전환 절감 분석 → 최적화 권고
 
 **사용 MCP 툴**:
 | 툴 | 설명 |
@@ -129,15 +129,13 @@ r"^(user_\d+_\d+|VU_\d+|vu\d+|test_?\d+)$"
 | `get_prometheus_metrics()` | Prometheus HTTP API — CPU%, 메모리%, HTTP 요청 수 |
 | `get_node_resources()` | kubectl top nodes |
 | `get_pod_resources()` | kubectl top pods |
-| `calculate_cost_savings()` | t3.medium OnDemand vs t4g.medium Spot 비용 비교 |
+| `calculate_cost_savings()` | t3.medium OnDemand vs t3.medium Spot 비용 비교 |
 
 **비용 계산 기준** (ap-northeast-2):
 | 인스턴스 | 시간당 USD |
 |---|---|
 | t3.medium OnDemand | $0.0520 |
-| t4g.medium OnDemand | $0.0416 |
 | t3.medium Spot (평균) | $0.0156 |
-| t4g.medium Spot (평균) | $0.0125 |
 
 ---
 
@@ -237,7 +235,7 @@ def _kubectl(*args) -> str:
 | Pending pod analysis | Pending 파드 원인 분석 |
 | DynamoDB / SQS status | 이벤트 결과 + SQS 상태 확인 |
 | Worker pod logs | Worker 로그 에러 확인 |
-| Graviton cost report | Graviton 전환 비용 절감 계산 |
+| Cost report | OnDemand vs Spot 비용 절감 계산 |
 
 ### 전체 자동 진단
 - **Run diagnosis** 버튼으로 세 전문가 + 팀장 전체 진단 실행

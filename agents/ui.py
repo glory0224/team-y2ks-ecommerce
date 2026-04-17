@@ -381,7 +381,7 @@ with st.sidebar:
     scenario_2 = st.button("Pending pod analysis", width="stretch")
     scenario_3 = st.button("DynamoDB / SQS status", width="stretch")
     scenario_4 = st.button("Worker pod logs", width="stretch")
-    scenario_5 = st.button("Graviton cost report", width="stretch")
+    scenario_5 = st.button("Cost report", width="stretch")
 
     st.markdown("<hr style='border-color:rgba(255,255,255,0.08);margin:16px 0'>", unsafe_allow_html=True)
 
@@ -738,7 +738,7 @@ SIDEBAR_MESSAGES = {
     "scenario_2": "Pending 파드가 있으면 원인을 분석하고 해결 방법을 제시해줘.",
     "scenario_3": "DynamoDB 이벤트 결과와 SQS 큐 상태를 확인해서 지금 이벤트가 정상적으로 처리되고 있는지 알려줘.",
     "scenario_4": "Worker 파드 로그에서 에러가 있는지 확인해줘.",
-    "scenario_5": "Graviton(ARM64) Spot 노드로 전환 시 예상 비용 절감 규모와 현재 Karpenter 상태를 알려줘.",
+    "scenario_5": "현재 OnDemand 대비 Spot 인스턴스 전환 시 예상 비용 절감 규모와 현재 Karpenter 상태를 알려줘.",
 }
 
 if "messages" not in st.session_state:

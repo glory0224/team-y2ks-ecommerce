@@ -1,9 +1,0 @@
-FROM --platform=linux/arm64 python:3.9-slim
-RUN pip install --no-cache-dir \
-    flask \
-    boto3 \
-    redis \
-    gunicorn \
-    prometheus-flask-exporter \
-    requests
-WORKDIR /app
