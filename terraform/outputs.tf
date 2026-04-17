@@ -50,6 +50,11 @@ output "karpenter_node_role_arn" {
 # ============================================================
 # 이후 kubectl 작업 안내
 # ============================================================
+output "app_url" {
+  description = "Y2KS 서비스 접속 URL"
+  value       = "http://${var.domain_name}"
+}
+
 output "next_steps" {
   description = "terraform apply 완료 후 실행 순서"
   value       = <<-EOT

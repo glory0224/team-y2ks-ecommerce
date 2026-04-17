@@ -656,3 +656,111 @@ resource "null_resource" "install_y2ks" {
 
   depends_on = [null_resource.service_accounts, null_resource.install_karpenter, null_resource.build_and_push_images, null_resource.apply_monitoring_manifests]
 }
+
+# ============================================================
+# Route53 DNS — y2ks-frontend-svc ELB → 도메인 연결
+# ============================================================
+resource "null_resource" "setup_dns" {
+  depends_on = [null_resource.install_y2ks]
+
+  triggers = {
+    cluster_name   = var.cluster_name
+    domain_name    = var.domain_name
+    hosted_zone_id = data.aws_route53_zone.main.zone_id
+  }
+
+  # apply: ELB hostname → Route53 A alias 레코드 생성/갱신
+  provisioner "local-exec" {
+    interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
+    command     = <<-EOT
+      $ErrorActionPreference = "Stop"
+      aws eks update-kubeconfig --name ${var.cluster_name} --region ap-northeast-2 2>$null
+
+      Write-Host "=== Route53 DNS 설정 ==="
+
+      # ELB EXTERNAL-IP 대기 (최대 5분)
+      $elbHostname = $null
+      for ($i = 0; $i -lt 30; $i++) {
+        $elbHostname = kubectl get svc y2ks-frontend-svc `
+          -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>$null
+        if ($elbHostname) { break }
+        Write-Host "  ELB 대기중... ($i/30)"
+        Start-Sleep -Seconds 10
+      }
+      if (-not $elbHostname) { Write-Error "ELB EXTERNAL-IP 획득 실패"; exit 1 }
+      Write-Host "  ELB hostname: $elbHostname"
+
+      # Classic ELB canonical hosted zone ID 조회 (DNS name으로 검색 — 이름 파싱 불필요)
+      # ELB DNS 형식: <hash>-<number>.<region>.elb.amazonaws.com
+      # --load-balancer-names 는 hash 부분만 필요하나 파싱이 불안정 → DNSName contains 로 조회
+      $ErrorActionPreference = "SilentlyContinue"
+      $elbHostnamePrefix = $elbHostname.Split('.')[0]
+      $elbZoneId = aws elb describe-load-balancers `
+        --query "LoadBalancerDescriptions[?contains(DNSName, '$elbHostnamePrefix')].CanonicalHostedZoneNameID | [0]" `
+        --output text 2>$null
+      $ErrorActionPreference = "Stop"
+      Write-Host "  ELB hosted zone ID: $elbZoneId"
+
+      # [1] y2ks.site → 프론트엔드 ELB (임시 파일로 JSON 전달 — PowerShell ConvertTo-Json 따옴표 버그 방지)
+      $tmpJson = "$env:TEMP\r53-frontend.json"
+      $jsonStr = '{"Changes":[{"Action":"UPSERT","ResourceRecordSet":{"Name":"${var.domain_name}.","Type":"A","AliasTarget":{"HostedZoneId":"' + $elbZoneId + '","DNSName":"dualstack.' + $elbHostname + '.","EvaluateTargetHealth":false}}}]}'
+      [System.IO.File]::WriteAllText($tmpJson, $jsonStr)
+      aws route53 change-resource-record-sets `
+        --hosted-zone-id ${data.aws_route53_zone.main.zone_id} `
+        --change-batch "file://$tmpJson"
+      if ($LASTEXITCODE -ne 0) { Remove-Item $tmpJson -Force; Write-Error "Route53 프론트엔드 레코드 생성 실패"; exit 1 }
+      Remove-Item $tmpJson -Force
+      Write-Host "[OK] ${var.domain_name} → $elbHostname"
+
+      # [2] grafana.y2ks.site → Grafana ELB
+      $ErrorActionPreference = "SilentlyContinue"
+      $grafanaHostname = kubectl get svc prometheus-grafana -n monitoring `
+        -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>$null
+      if ($grafanaHostname) {
+        $grafanaPrefix = $grafanaHostname.Split('.')[0]
+        $grafanaZoneId = aws elb describe-load-balancers `
+          --query "LoadBalancerDescriptions[?contains(DNSName, '$grafanaPrefix')].CanonicalHostedZoneNameID | [0]" `
+          --output text 2>$null
+        $tmpGrafana = "$env:TEMP\r53-grafana.json"
+        $grafanaJson = '{"Changes":[{"Action":"UPSERT","ResourceRecordSet":{"Name":"grafana.${var.domain_name}.","Type":"A","AliasTarget":{"HostedZoneId":"' + $grafanaZoneId + '","DNSName":"dualstack.' + $grafanaHostname + '.","EvaluateTargetHealth":false}}}]}'
+        [System.IO.File]::WriteAllText($tmpGrafana, $grafanaJson)
+        aws route53 change-resource-record-sets `
+          --hosted-zone-id ${data.aws_route53_zone.main.zone_id} `
+          --change-batch "file://$tmpGrafana" 2>$null
+        Remove-Item $tmpGrafana -Force
+        Write-Host "[OK] grafana.${var.domain_name} → $grafanaHostname"
+      } else {
+        Write-Host "[WARN] Grafana ELB hostname 조회 실패 — DNS 설정 건너뜀"
+      }
+      $ErrorActionPreference = "Stop"
+      Write-Host "=== Route53 DNS 설정 완료 ==="
+    EOT
+  }
+
+  # destroy: Route53 A 레코드 삭제 (임시 파일 방식으로 JSON 전달)
+  provisioner "local-exec" {
+    when        = destroy
+    interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
+    command     = <<-EOT
+      $ErrorActionPreference = "SilentlyContinue"
+      Write-Host "=== Route53 레코드 삭제 ==="
+
+      foreach ($recordName in @("${self.triggers.domain_name}.", "grafana.${self.triggers.domain_name}.")) {
+        $rec = aws route53 list-resource-record-sets `
+          --hosted-zone-id ${self.triggers.hosted_zone_id} `
+          --query "ResourceRecordSets[?Name=='$recordName']|[?Type=='A']|[0]" `
+          --output json 2>$null | ConvertFrom-Json
+        if (-not $rec) { Write-Host "  삭제할 레코드 없음: $recordName"; continue }
+        $recJson = $rec | ConvertTo-Json -Depth 10 -Compress
+        $delStr = '{"Changes":[{"Action":"DELETE","ResourceRecordSet":' + $recJson + '}]}'
+        $tmpDel = "$env:TEMP\r53-delete.json"
+        [System.IO.File]::WriteAllText($tmpDel, $delStr)
+        aws route53 change-resource-record-sets `
+          --hosted-zone-id ${self.triggers.hosted_zone_id} `
+          --change-batch "file://$tmpDel" 2>$null
+        Remove-Item $tmpDel -Force
+        Write-Host "  [OK] $recordName 레코드 삭제 완료"
+      }
+    EOT
+  }
+}
