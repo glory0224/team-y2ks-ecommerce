@@ -27,7 +27,7 @@ KEDA + Karpenter로 트래픽 스파이크를 자동 대응하며, Terraform 한
        │             │
   당첨 처리      낙첨 처리
        │
-  [DynamoDB]  [SES 이메일 발송]  [Redis 결과 저장]
+  [DynamoDB 당첨 이력 저장]  [Redis 결과 저장]  [로그인 조회로 결과 확인]
 ```
 
 ---
@@ -43,7 +43,6 @@ KEDA + Karpenter로 트래픽 스파이크를 자동 대응하며, Terraform 한
 | y2ks-product | 상품 서비스 | Flask |
 | Redis | 실시간 티켓 카운터 + 결과 임시 저장 | Redis Alpine |
 | DynamoDB | 쿠폰 발급 이력 영구 저장 | AWS DynamoDB (PAY_PER_REQUEST) |
-| SES | 당첨자 쿠폰 이메일 발송 | AWS SES |
 | SQS | 쿠폰 요청 비동기 처리 버퍼 | AWS SQS |
 | KEDA | SQS 큐 깊이 기반 Worker 자동 스케일링 (1~50) | KEDA v2 |
 | Karpenter | 부하 시 EC2 노드 자동 프로비저닝/제거 | Karpenter v1.1.1 |
@@ -146,7 +145,7 @@ terraform apply
 
 `terraform apply` 한 번으로 아래가 모두 자동 실행됩니다:
 
-- VPC / EKS 클러스터 / IAM / DynamoDB / SQS / S3 생성
+- VPC / EKS 클러스터 / IAM / DynamoDB / SQS 생성
 - ECR 리포지토리 생성 + Dockerfile 기반 이미지 빌드 & ECR 푸시
 - 팀원 IAM 유저에게 kubectl 접근 권한 자동 부여
 - kubeconfig 자동 업데이트
@@ -317,4 +316,90 @@ terraform destroy
 2. Y2KS 앱 삭제 → ELB 삭제 확인
 3. Karpenter / KEDA / Prometheus Helm 삭제
 4. ECR 이미지 및 리포지토리 삭제
-5. EKS 클러스터 / 노드그룹 / IAM / VPC / S3 삭제
+5. EKS 클러스터 / 노드그룹 / IAM / VPC 삭제
+
+---
+
+## 멀티 에이전트
+
+AWS Strands Agents SDK + Amazon Bedrock 기반의 EKS 운영 자동화 에이전트입니다.  
+관리자 페이지(`/admin`)에서 질문을 입력하면 에이전트가 자동으로 전문가를 선택해 분석합니다.
+
+### 구성
+
+```
+사용자 질문 (관리자 페이지 / Slack)
+        ↓
+   [Router] - Claude Sonnet 4.6
+        ↓
+단일 전문가              복수 전문가
+    ↓                       ↓
+직접 처리             전문가끼리 핸드오프
+                    EKS ↔ DB ↔ Observe
+                          ↓
+               [Orchestrator] - Claude Sonnet 4.6
+```
+
+| 에이전트 | 모델 | 담당 |
+|---------|------|------|
+| Router | Claude Sonnet 4.6 | 질문 분석 → 전문가 선택 |
+| EKS Agent | Claude Haiku 3 | kubectl / KEDA / Karpenter / SQS |
+| DB Agent | Claude Haiku 3 | DynamoDB / 봇 탐지 / 참여 분석 |
+| Observe Agent | Claude Haiku 3 | 리소스 / 비용 / 성능 |
+| Orchestrator | Claude Sonnet 4.6 | 교차 분석 + 최종 판단 |
+
+### 설치
+
+> ⚠️ Python 3.14는 anyio 4.x와 충돌합니다. **Python 3.12** 사용하세요.
+
+```powershell
+winget install Python.Python.3.12
+
+cd agents
+py -3.12 -m venv venv312
+venv312\Scripts\activate
+pip install strands-agents boto3 python-dotenv slack_bolt
+```
+
+AWS 콘솔 → Bedrock → Model access에서 아래 모델 활성화 필요:
+- `Claude Sonnet 4` (APAC 리전)
+- `Claude Haiku 3` (APAC 리전)
+
+### 환경변수
+
+`agents/.env` 파일 생성:
+
+```env
+AWS_REGION=ap-northeast-2
+DDB_TABLE=y2ks-coupon-claims
+SQS_QUEUE_URL=https://sqs.ap-northeast-2.amazonaws.com/{ACCOUNT_ID}/y2ks-queue
+SLACK_BOT_TOKEN=xoxb-...
+SLACK_APP_TOKEN=xapp-...
+```
+
+### 실행
+
+```powershell
+cd agents
+venv312\Scripts\activate
+
+# Slack 봇
+python slack_bot.py
+
+# CLI
+python eks_agent.py --query "지금 Pending 파드 있어?"
+python eks_agent.py --auto           # 전체 자동 진단
+```
+
+### 파일 구조
+
+```
+agents/
+├── eks_agent.py        # 에이전트 + 라우터 + 오케스트레이터
+├── eks_mcp_server.py   # MCP 툴 서버 (kubectl + boto3 + Prometheus)
+├── slack_bot.py        # Slack 봇
+├── main.py             # 순차 실행 버전
+├── requirements.txt    # Python 패키지 목록
+└── .env                # 환경변수
+```
+
