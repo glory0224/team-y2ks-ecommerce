@@ -472,6 +472,15 @@ resource "null_resource" "install_y2ks" {
       $ErrorActionPreference = "SilentlyContinue"
       aws eks update-kubeconfig --name ${self.triggers.cluster_name} --region ap-northeast-2 2>$null
 
+      # terraform apply 시 null_resource 교체(replace)에도 destroy provisioner가 실행됨
+      # EKS 클러스터가 ACTIVE 상태면 Helm 업그레이드인 것이므로 정리 작업 전부 건너뜀
+      $clusterStatus = aws eks describe-cluster --name ${self.triggers.cluster_name} --query "cluster.status" --output text --region ap-northeast-2 2>$null
+      if ($clusterStatus -eq "ACTIVE") {
+        Write-Host "[SKIP] 클러스터가 ACTIVE 상태 — terraform apply replace 감지, 정리 건너뜀"
+        exit 0
+      }
+      Write-Host "클러스터 상태: $clusterStatus — terraform destroy 진행"
+
       Write-Host "=== [0/4] EKS Cluster SG 인바운드/아웃바운드 규칙 사전 정리 ==="
       # EKS가 자동 생성한 cluster SG의 규칙을 미리 제거해 VPC 삭제 블로킹 방지
       $clusterSg = aws ec2 describe-security-groups `

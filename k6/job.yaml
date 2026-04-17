@@ -20,9 +20,9 @@ spec:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
             - matchExpressions:
-              - key: node-type
+              - key: karpenter.sh/capacity-type
                 operator: In
-                values: ["ondemand-1", "ondemand-2"]
+                values: ["on-demand"]
       containers:
       - name: k6
         image: grafana/k6:latest
@@ -39,11 +39,11 @@ spec:
           value: "p(50),p(95),p(99)"
         resources:
           requests:
-            cpu: 300m
-            memory: 512Mi
-          limits:
             cpu: "2"
-            memory: 1Gi
+            memory: 2Gi
+          limits:
+            cpu: "4"
+            memory: 4Gi
         volumeMounts:
         - name: k6-script
           mountPath: /scripts
