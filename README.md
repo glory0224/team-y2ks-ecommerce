@@ -146,7 +146,7 @@ terraform apply
 
 `terraform apply` 한 번으로 아래가 모두 자동 실행됩니다:
 
-- VPC / EKS 클러스터 / IAM / DynamoDB / SQS / S3 생성
+- VPC / EKS 클러스터 / IAM / DynamoDB / SQS 생성
 - ECR 리포지토리 생성 + Dockerfile 기반 이미지 빌드 & ECR 푸시
 - 팀원 IAM 유저에게 kubectl 접근 권한 자동 부여
 - kubeconfig 자동 업데이트
@@ -317,7 +317,7 @@ terraform destroy
 2. Y2KS 앱 삭제 → ELB 삭제 확인
 3. Karpenter / KEDA / Prometheus Helm 삭제
 4. ECR 이미지 및 리포지토리 삭제
-5. EKS 클러스터 / 노드그룹 / IAM / VPC / S3 삭제
+5. EKS 클러스터 / 노드그룹 / IAM / VPC 삭제
 
 ---
 
@@ -400,6 +400,7 @@ agents/
 ├── eks_mcp_server.py   # MCP 툴 서버 (kubectl + boto3 + Prometheus)
 ├── slack_bot.py        # Slack 봇
 ├── main.py             # 순차 실행 버전
+├── requirements.txt    # Python 패키지 목록
 └── .env                # 환경변수
 ```
 
