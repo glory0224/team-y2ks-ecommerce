@@ -226,8 +226,8 @@ def get_participation_timeline() -> str:
 
 @mcp.tool()
 def calculate_cost_savings() -> str:
-    """t3.medium OnDemand vs t4g.medium Graviton Spot 비용 비교를 계산합니다."""
-    costs = {"t3.medium_ondemand": 0.0520, "t4g.medium_spot_avg": 0.0125}
+    """t3.medium OnDemand vs Spot 비용 비교를 계산합니다."""
+    costs = {"t3.medium_ondemand": 0.0520, "t3.medium_spot_avg": 0.0156}
     try:
         r = subprocess.run(["kubectl", "get", "nodes", "--no-headers"],
                            capture_output=True, text=True, timeout=5)
@@ -235,12 +235,12 @@ def calculate_cost_savings() -> str:
     except Exception:
         node_count = 2
     monthly_hours = 24 * 30
-    current = costs["t3.medium_ondemand"]  * node_count * monthly_hours
-    target  = costs["t4g.medium_spot_avg"] * node_count * monthly_hours
+    current = costs["t3.medium_ondemand"] * node_count * monthly_hours
+    target  = costs["t3.medium_spot_avg"] * node_count * monthly_hours
     saving  = current - target
     return json.dumps({
         "current_monthly_usd":  round(current, 2),
-        "graviton_monthly_usd": round(target, 2),
+        "spot_monthly_usd":     round(target, 2),
         "monthly_saving_usd":   round(saving, 2),
         "saving_rate":          f"{saving/current*100:.1f}%"
     }, ensure_ascii=False)

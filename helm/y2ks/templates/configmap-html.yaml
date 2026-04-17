@@ -338,7 +338,7 @@ data:
           <button class="qa-btn" onclick="quickSend('현재 EKS 클러스터 전체 상태를 진단해줘')">전체 클러스터 진단</button>
           <button class="qa-btn" onclick="quickSend('지금 Pending 상태인 파드가 있어? 원인도 알려줘')">Pending 파드 확인</button>
           <button class="qa-btn" onclick="quickSend('SQS 큐 깊이와 Worker 스케일 상태 알려줘')">SQS 큐 현황</button>
-          <button class="qa-btn" onclick="quickSend('Graviton 전환 시 비용 절감액 계산해줘')">비용 최적화 분석</button>
+          <button class="qa-btn" onclick="quickSend('OnDemand 대비 Spot 전환 시 비용 절감액 계산해줘')">비용 최적화 분석</button>
           <button class="qa-btn" onclick="quickSend('DynamoDB에서 봇 트래픽 패턴 탐지해줘')">봇 트래픽 탐지</button>
           <button class="qa-btn" onclick="quickSend('Karpenter 노드 현황과 CPU 한계 상태 확인해줘')">Karpenter 상태</button>
         </div>
