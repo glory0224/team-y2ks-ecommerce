@@ -3,6 +3,4 @@ kind: ConfigMap
 metadata:
   name: aws-config
 data:
-  SQS_QUEUE_URL: "https://sqs.{{ .Values.region }}.amazonaws.com/{{ .Values.accountId }}/{{ .Values.queueName }}"
   AWS_REGION: "{{ .Values.region }}"
-  DDB_TABLE: "{{ .Values.ddbTable }}"

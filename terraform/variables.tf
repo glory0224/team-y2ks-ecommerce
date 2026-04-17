@@ -34,3 +34,10 @@ variable "grafana_admin_password" {
   default     = "admin123!"
   sensitive   = true
 }
+
+variable "admin_token" {
+  description = "Y2KS 어드민 페이지 접근 토큰 (HTTP Basic Auth 비밀번호로 사용)"
+  type        = string
+  default     = ""
+  sensitive   = true
+}

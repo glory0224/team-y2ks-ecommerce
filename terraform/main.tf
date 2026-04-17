@@ -121,6 +121,15 @@ resource "null_resource" "install_prometheus" {
       # helm uninstall (--no-hooks 로 hook hang 방지)
       helm uninstall prometheus --namespace monitoring --no-hooks --timeout 2m0s 2>$null
 
+      # CRD finalizer 제거 — Prometheus Operator CRD가 finalizer 갖고 있으면 namespace가 Terminating에서 멈춤
+      $crdKinds = @("prometheusrules","servicemonitors","podmonitors","alertmanagers","prometheuses","probes","thanosrulers")
+      foreach ($kind in $crdKinds) {
+        $items = kubectl get $kind -n monitoring --no-headers -o name 2>$null
+        foreach ($item in ($items -split "`n" | Where-Object { $_ })) {
+          kubectl patch $item -n monitoring --type=merge -p '{"metadata":{"finalizers":[]}}' 2>$null
+        }
+      }
+
       # namespace 삭제 (60초 타임아웃, 실패해도 계속)
       $job = Start-Job { kubectl delete namespace monitoring --timeout=60s --ignore-not-found 2>$null }
       Wait-Job $job -Timeout 65 | Out-Null
@@ -342,7 +351,17 @@ resource "null_resource" "install_keda" {
   provisioner "local-exec" {
     when        = destroy
     interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
-    command     = "helm uninstall keda --namespace keda --timeout 2m0s 2>$null; exit 0"
+    command     = <<-EOT
+      $ErrorActionPreference = "SilentlyContinue"
+      aws eks update-kubeconfig --name ${self.triggers.cluster_name} --region ap-northeast-2 2>$null
+      # ScaledObject finalizer 제거 — finalizer 있으면 helm uninstall이 hung 상태로 대기
+      $scaled = kubectl get scaledobjects --all-namespaces --no-headers -o name 2>$null
+      foreach ($s in ($scaled -split "`n" | Where-Object { $_ })) {
+        kubectl patch $s --type=merge -p '{"metadata":{"finalizers":[]}}' 2>$null
+      }
+      helm uninstall keda --namespace keda --timeout 2m0s 2>$null
+      exit 0
+    EOT
   }
 
   provisioner "local-exec" {
@@ -439,6 +458,7 @@ resource "null_resource" "install_y2ks" {
     # 템플릿 파일 변경 감지 → terraform apply 시 자동 재배포
     config_hash = sha256(join("", [
       file("${path.module}/../helm/y2ks/templates/aws-config.yaml"),
+      file("${path.module}/../helm/y2ks/templates/aws-secret.yaml"),
       file("${path.module}/../helm/y2ks/templates/frontend.yaml"),
       file("${path.module}/../helm/y2ks/templates/worker.yaml"),
       file("${path.module}/../helm/y2ks/templates/keda.yaml"),
@@ -482,8 +502,28 @@ resource "null_resource" "install_y2ks" {
         Write-Host "Cluster SG 없음 — 건너뜀"
       }
 
-      Write-Host "=== [1/4] Karpenter 노드 drain 및 ASG 삭제 ==="
-      # kubectl drain 으로 K8s 레벨에서 먼저 노드 제거 (ENI 정리 유도)
+      # ── [병목1 fix] 관리형 노드그룹 사전 drain + scale-down ──────
+      # Terraform이 노드그룹을 삭제할 때 직접 drain하면 오래 걸림
+      # 미리 drain + desired=0 으로 줄여두면 Terraform 삭제가 수 분 단축됨
+      Write-Host "=== [1a/4] 관리형 노드그룹 drain + scale-down ==="
+      $managedNodeGroups = @("ondemand-1", "ondemand-2")
+      foreach ($ng in $managedNodeGroups) {
+        $nodes = kubectl get nodes -l "node-type=$ng" --no-headers -o name 2>$null
+        if ($nodes) {
+          foreach ($node in ($nodes -split "`n" | Where-Object { $_ })) {
+            Write-Host "drain: $node"
+            kubectl drain $node --ignore-daemonsets --delete-emptydir-data --force --timeout=60s 2>$null
+          }
+        }
+        aws eks update-nodegroup-config `
+          --cluster-name ${self.triggers.cluster_name} `
+          --nodegroup-name $ng `
+          --scaling-config minSize=0,maxSize=2,desiredSize=0 `
+          --region ap-northeast-2 2>$null
+        Write-Host "[OK] $ng scale-down 요청 완료"
+      }
+
+      Write-Host "=== [1b/4] Karpenter 노드 drain + EC2 직접 종료 ==="
       $karpenterNodes = kubectl get nodes -l karpenter.sh/nodepool --no-headers -o name 2>$null
       if ($karpenterNodes) {
         foreach ($node in ($karpenterNodes -split "`n" | Where-Object { $_ })) {
@@ -495,8 +535,7 @@ resource "null_resource" "install_y2ks" {
         Write-Host "Karpenter 노드 없음 — drain 건너뜀"
       }
 
-      # Karpenter가 만든 모든 ASG를 AWS CLI로 직접 삭제 (Karpenter가 죽어있어도 동작)
-      # nodepool 태그가 있는 모든 ASG 대상 (default 외 다른 nodepool도 포함)
+      # ASG --force-delete 후 EC2 인스턴스도 직접 terminate (병목1 fix)
       $asgs = aws autoscaling describe-auto-scaling-groups `
         --query "AutoScalingGroups[?not_null(Tags[?Key=='karpenter.sh/nodepool'])].AutoScalingGroupName" `
         --output text 2>$null
@@ -505,8 +544,18 @@ resource "null_resource" "install_y2ks" {
           Write-Host "ASG 삭제 중: $asg"
           aws autoscaling delete-auto-scaling-group --auto-scaling-group-name $asg --force-delete 2>$null
         }
-        Write-Host "ASG 삭제 요청 완료. EC2 terminate 완료까지 폴링 (최대 10분)..."
-        $maxWait = 600
+        # ASG --force-delete와 병행하여 EC2 인스턴스 직접 종료 → 폴링 시간 단축
+        $instanceIds = aws ec2 describe-instances `
+          --filters "Name=tag:karpenter.sh/nodepool,Values=*" `
+                    "Name=instance-state-name,Values=pending,running,stopping" `
+          --query "Reservations[].Instances[].InstanceId" --output text 2>$null
+        if ($instanceIds -and $instanceIds -ne "None") {
+          Write-Host "EC2 인스턴스 직접 종료: $instanceIds"
+          aws ec2 terminate-instances --instance-ids ($instanceIds -split "\s+" | Where-Object { $_ }) `
+            --region ap-northeast-2 2>$null
+        }
+        Write-Host "EC2 terminate 완료까지 폴링 (최대 3분)..."
+        $maxWait = 180
         $elapsed = 0
         while ($elapsed -lt $maxWait) {
           $runningCount = aws ec2 describe-instances `
@@ -517,42 +566,65 @@ resource "null_resource" "install_y2ks" {
             Write-Host "[OK] 모든 Karpenter 노드 종료 완료 ($elapsed s)"; break
           }
           Write-Host "Karpenter 노드 $runningCount 개 종료 대기... ($elapsed s)"
-          Start-Sleep -Seconds 15
-          $elapsed += 15
+          Start-Sleep -Seconds 10
+          $elapsed += 10
         }
         if ($elapsed -ge $maxWait) { Write-Host "[WARN] Karpenter EC2 종료 타임아웃 — 수동 확인 필요" }
       } else {
         Write-Host "Karpenter ASG 없음 — 건너뜀"
       }
 
-      Write-Host "=== [2/4] Y2KS 앱 삭제 (LoadBalancer → ELB → ENI 정리) ==="
+      Write-Host "=== [2/4] Y2KS 앱 삭제 + ELB 직접 삭제 (병목2 fix) ==="
       helm uninstall y2ks --namespace default --timeout 2m0s 2>$null
 
-      Write-Host "ELB 삭제 확인 중 (최대 10분)..."
+      # K8s 컨트롤러가 ELB를 알아서 삭제하길 기다리는 대신 AWS CLI로 직접 삭제
       $vpcId = aws ec2 describe-vpcs --filters "Name=tag:Name,Values=${self.triggers.cluster_name}-vpc" --query "Vpcs[0].VpcId" --output text 2>$null
-      $timeout = 600
-      $elapsed = 0
-      while ($elapsed -lt $timeout) {
-        $classicElbs = (aws elb describe-load-balancers --query "LoadBalancerDescriptions[?VPCId=='$vpcId'].LoadBalancerName" --output text 2>$null)
-        $v2Elbs = (aws elbv2 describe-load-balancers --query "LoadBalancers[?VpcId=='$vpcId'].LoadBalancerArn" --output text 2>$null)
-        $classicElbs = if ($classicElbs) { $classicElbs.Trim() } else { "" }
-        $v2Elbs = if ($v2Elbs) { $v2Elbs.Trim() } else { "" }
-        if ([string]::IsNullOrEmpty($classicElbs) -and [string]::IsNullOrEmpty($v2Elbs)) { Write-Host "[OK] ELB 삭제 완료 확인 ($elapsed s)"; break }
-        Write-Host "ELB 삭제 대기 중... ($elapsed s) Classic=$classicElbs V2=$v2Elbs"
-        Start-Sleep -Seconds 10
-        $elapsed += 10
-      }
-      if ($elapsed -ge $timeout) { Write-Host "[WARN] ELB 삭제 타임아웃 — 수동으로 ELB 및 ENI 확인 필요" }
-
-      Write-Host "=== [3/4] 잔존 ENI 확인 ==="
       if ($vpcId -and $vpcId -ne "None") {
-        $stuckEnis = aws ec2 describe-network-interfaces `
-          --filters "Name=vpc-id,Values=$vpcId" `
-                    "Name=status,Values=in-use" `
-          --query "NetworkInterfaces[*].{Id:NetworkInterfaceId,Status:Status,Desc:Description}" `
+        # Classic ELB 직접 삭제
+        $classicElbs = aws elb describe-load-balancers `
+          --query "LoadBalancerDescriptions[?VPCId=='$vpcId'].LoadBalancerName" `
           --output text 2>$null
-        if ($stuckEnis -and $stuckEnis -ne "None") {
-          Write-Host "[WARN] VPC에 in-use ENI 남아있음:`n$stuckEnis"
+        foreach ($elb in ($classicElbs -split "\s+" | Where-Object { $_ })) {
+          Write-Host "Classic ELB 삭제: $elb"
+          aws elb delete-load-balancer --load-balancer-name $elb 2>$null
+        }
+        # ALB/NLB 직접 삭제
+        $v2Elbs = aws elbv2 describe-load-balancers `
+          --query "LoadBalancers[?VpcId=='$vpcId'].LoadBalancerArn" `
+          --output text 2>$null
+        foreach ($elb in ($v2Elbs -split "\s+" | Where-Object { $_ })) {
+          Write-Host "ALB/NLB 삭제: $elb"
+          aws elbv2 delete-load-balancer --load-balancer-arn $elb 2>$null
+        }
+        # ELB 삭제 완료 확인 (최대 2분으로 단축)
+        $timeout = 120
+        $elapsed = 0
+        while ($elapsed -lt $timeout) {
+          $remaining = @(
+            (aws elb describe-load-balancers --query "LoadBalancerDescriptions[?VPCId=='$vpcId'].LoadBalancerName" --output text 2>$null),
+            (aws elbv2 describe-load-balancers --query "LoadBalancers[?VpcId=='$vpcId'].LoadBalancerArn" --output text 2>$null)
+          ) | Where-Object { $_ -and $_.Trim() -ne "" }
+          if ($remaining.Count -eq 0) { Write-Host "[OK] ELB 삭제 완료 ($elapsed s)"; break }
+          Start-Sleep -Seconds 10; $elapsed += 10
+        }
+        if ($elapsed -ge $timeout) { Write-Host "[WARN] ELB 삭제 타임아웃" }
+      }
+
+      Write-Host "=== [3/4] 잔존 ENI 정리 ==="
+      if ($vpcId -and $vpcId -ne "None") {
+        # available 상태 ENI 직접 삭제 (VPC 삭제 블로킹 방지)
+        $availableEnis = aws ec2 describe-network-interfaces `
+          --filters "Name=vpc-id,Values=$vpcId" "Name=status,Values=available" `
+          --query "NetworkInterfaces[*].NetworkInterfaceId" --output text 2>$null
+        foreach ($eni in ($availableEnis -split "\s+" | Where-Object { $_ })) {
+          Write-Host "ENI 삭제: $eni"
+          aws ec2 delete-network-interface --network-interface-id $eni 2>$null
+        }
+        $inUseEnis = aws ec2 describe-network-interfaces `
+          --filters "Name=vpc-id,Values=$vpcId" "Name=status,Values=in-use" `
+          --query "NetworkInterfaces[*].NetworkInterfaceId" --output text 2>$null
+        if ($inUseEnis -and $inUseEnis -ne "None") {
+          Write-Host "[WARN] in-use ENI 남아있음 (ELB/NAT가 아직 정리 중): $inUseEnis"
         } else {
           Write-Host "[OK] 잔존 ENI 없음"
         }
@@ -577,7 +649,8 @@ resource "null_resource" "install_y2ks" {
         --set workerRoleArn=${aws_iam_role.worker.arn} `
         --set karpenterNodeRoleName=${aws_iam_role.karpenter_node.name} `
         --set images.frontend=${aws_ecr_repository.frontend.repository_url}:latest `
-        --set images.worker=${aws_ecr_repository.worker.repository_url}:latest
+        --set images.worker=${aws_ecr_repository.worker.repository_url}:latest `
+        --set adminToken="${var.admin_token}"
     EOT
   }
 

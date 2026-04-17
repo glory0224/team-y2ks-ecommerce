@@ -5,5 +5,6 @@ RUN pip install --no-cache-dir \
     redis \
     gunicorn \
     prometheus-flask-exporter \
-    requests
+    requests \
+    bcrypt
 WORKDIR /app
