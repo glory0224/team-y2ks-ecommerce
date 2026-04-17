@@ -27,7 +27,7 @@ KEDA + Karpenter로 트래픽 스파이크를 자동 대응하며, Terraform 한
        │             │
   당첨 처리      낙첨 처리
        │
-  [DynamoDB]  [SES 이메일 발송]  [Redis 결과 저장]
+  [DynamoDB 당첨 이력 저장]  [Redis 결과 저장]  [로그인 조회로 결과 확인]
 ```
 
 ---
@@ -43,7 +43,6 @@ KEDA + Karpenter로 트래픽 스파이크를 자동 대응하며, Terraform 한
 | y2ks-product | 상품 서비스 | Flask |
 | Redis | 실시간 티켓 카운터 + 결과 임시 저장 | Redis Alpine |
 | DynamoDB | 쿠폰 발급 이력 영구 저장 | AWS DynamoDB (PAY_PER_REQUEST) |
-| SES | 당첨자 쿠폰 이메일 발송 | AWS SES |
 | SQS | 쿠폰 요청 비동기 처리 버퍼 | AWS SQS |
 | KEDA | SQS 큐 깊이 기반 Worker 자동 스케일링 (1~50) | KEDA v2 |
 | Karpenter | 부하 시 EC2 노드 자동 프로비저닝/제거 | Karpenter v1.1.1 |
