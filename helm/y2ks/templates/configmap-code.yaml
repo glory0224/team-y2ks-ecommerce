@@ -4,8 +4,9 @@ metadata:
   name: y2ks-app-code
 data:
   app.py: |
-    from flask import Flask, jsonify, request
-    import boto3, redis, json, os, random, string, hashlib
+    from flask import Flask, jsonify, request, session, redirect
+    from functools import wraps
+    import boto3, redis, json, os, random, string, re, base64, bcrypt, hashlib
     from prometheus_flask_exporter import PrometheusMetrics
 
     app = Flask(__name__)
@@ -21,12 +22,85 @@ data:
     QUEUE_URL = os.environ.get('SQS_QUEUE_URL', '')
     DDB_TABLE = os.environ.get('DDB_TABLE', 'y2ks-coupon-claims')
     TICKET_COUNT = int(os.environ.get('TICKET_COUNT', '100'))
+    ADMIN_TOKEN = os.environ.get('ADMIN_TOKEN', '')
+
+    app.secret_key = hashlib.sha256(f'y2ks-{ADMIN_TOKEN}'.encode()).hexdigest()
 
     r = redis.Redis(host=REDIS_HOST, port=6379, db=0, decode_responses=True)
     sqs_client = boto3.client('sqs', region_name=AWS_REGION)
 
+    NICKNAME_RE = re.compile(r'^[a-zA-Z0-9가-힣_-]+$')
+
     def hash_password(password):
-        return hashlib.sha256(password.encode()).hexdigest()
+        return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+    def verify_password(password, hashed):
+        try:
+            return bcrypt.checkpw(password.encode(), hashed.encode())
+        except Exception:
+            return False
+
+    def validate_claim(nickname, password):
+        if not nickname or len(nickname) > 20:
+            return '닉네임은 1-20자 사이여야 합니다.'
+        if not NICKNAME_RE.match(nickname):
+            return '닉네임에 허용되지 않는 문자가 포함되어 있습니다.'
+        if not password or len(password) < 4:
+            return '비밀번호는 최소 4자 이상이어야 합니다.'
+        return None
+
+    def require_admin(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            if not ADMIN_TOKEN or session.get('admin_authenticated'):
+                return f(*args, **kwargs)
+            return jsonify({'error': 'Unauthorized'}), 401
+        return decorated
+
+    @app.route('/admin/login', methods=['GET', 'POST'])
+    def admin_login():
+        if request.method == 'POST':
+            token = request.form.get('token', '').strip()
+            if token == ADMIN_TOKEN:
+                session['admin_authenticated'] = True
+                return redirect('/admin')
+            return _login_page(error=True)
+        return _login_page()
+
+    def _login_page(error=False):
+        err_html = '<p style="color:#ef4444;font-size:13px;margin-top:10px">비밀번호가 올바르지 않습니다.</p>' if error else ''
+        return (
+            '<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">'
+            '<title>Y2KS Admin Login</title>'
+            '<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;700;800&display=swap" rel="stylesheet">'
+            '<style>'
+            '*{margin:0;padding:0;box-sizing:border-box}'
+            'body{font-family:"Outfit",sans-serif;background:#0d0d0d;color:#e8e8e8;display:flex;align-items:center;justify-content:center;min-height:100vh}'
+            '.box{background:#111;border:1px solid #1f1f1f;border-radius:12px;padding:48px 40px;width:100%;max-width:360px}'
+            '.logo{font-size:20px;font-weight:800;letter-spacing:8px;color:#fff;margin-bottom:8px}'
+            '.logo span{color:#c8a96e;font-size:11px;font-weight:400;letter-spacing:3px;margin-left:8px;vertical-align:middle}'
+            '.sub{font-size:12px;color:#444;margin-bottom:32px}'
+            'label{font-size:11px;letter-spacing:2px;color:#555;text-transform:uppercase}'
+            'input{width:100%;background:#0d0d0d;border:1px solid #2a2a2a;color:#e8e8e8;padding:12px 16px;border-radius:8px;font-size:14px;font-family:inherit;outline:none;margin-top:8px;transition:border-color .2s}'
+            'input:focus{border-color:#c8a96e}'
+            'button{width:100%;margin-top:20px;background:linear-gradient(135deg,#c8a96e,#a8803e);border:none;color:#0a0a0a;padding:13px;border-radius:8px;font-size:14px;font-weight:700;font-family:inherit;cursor:pointer;transition:opacity .2s}'
+            'button:hover{opacity:.85}'
+            '</style></head>'
+            '<body><div class="box">'
+            '<div class="logo">Y2KS <span>ADMIN</span></div>'
+            '<div class="sub">관리자 인증이 필요합니다</div>'
+            '<form method="POST">'
+            '<label>비밀번호</label>'
+            '<input type="password" name="token" placeholder="어드민 토큰 입력" autofocus>'
+            + err_html +
+            '<button type="submit">로그인</button>'
+            '</form></div></body></html>'
+        )
+
+    @app.route('/admin/logout')
+    def admin_logout():
+        session.clear()
+        return redirect('/')
 
     MAIN_HTML = open('/app/main.html').read()
     EVENT_HTML = open('/app/event.html').read()
@@ -76,8 +150,9 @@ data:
         data = request.get_json() or {}
         nickname = data.get('nickname', '').strip()
         password = data.get('password', '').strip()
-        if not nickname or not password:
-            return jsonify({'error': 'invalid_input', 'message': '닉네임과 비밀번호를 입력해주세요.'}), 400
+        err = validate_claim(nickname, password)
+        if err:
+            return jsonify({'error': 'invalid_input', 'message': err}), 400
         # Redis SADD로 중복 참여 차단 (0이면 이미 존재)
         added = r.sadd('participants', nickname)
         if added == 0:
@@ -116,7 +191,7 @@ data:
             item = resp.get('Item')
             if not item:
                 return jsonify({'success': False, 'message': '참여 기록이 없습니다.'})
-            if item.get('password_hash') != hash_password(password):
+            if not verify_password(password, item.get('password_hash', '')):
                 return jsonify({'success': False, 'message': '비밀번호가 올바르지 않습니다.'})
             return jsonify({
                 'success': True,
@@ -128,9 +203,12 @@ data:
 
     @app.route('/admin')
     def admin():
+        if ADMIN_TOKEN and not session.get('admin_authenticated'):
+            return redirect('/admin/login')
         return open('/app/admin.html').read()
 
     @app.route('/api/admin/stats')
+    @require_admin
     def admin_stats():
         tickets_left = r.get('tickets')
         if tickets_left is None:
@@ -173,6 +251,7 @@ data:
         })
 
     @app.route('/api/admin/claims')
+    @require_admin
     def admin_claims():
         try:
             page = max(1, int(request.args.get('page', 1)))
@@ -196,6 +275,7 @@ data:
             return jsonify({'items': [], 'total': 0, 'page': 1, 'limit': 20, 'pages': 1, 'error': str(e)})
 
     @app.route('/api/admin/reset', methods=['POST'])
+    @require_admin
     def admin_reset():
         keep_logs = (request.get_json(silent=True) or {}).get('keep_logs', False)
         r.set('tickets', TICKET_COUNT)

@@ -48,19 +48,19 @@ spec:
           value: "{{ .Values.ticketCount }}"
         - name: SQS_QUEUE_URL
           valueFrom:
-            configMapKeyRef:
-              name: aws-config
+            secretKeyRef:
+              name: y2ks-secrets
               key: SQS_QUEUE_URL
+        - name: DDB_TABLE
+          valueFrom:
+            secretKeyRef:
+              name: y2ks-secrets
+              key: DDB_TABLE
         - name: AWS_REGION
           valueFrom:
             configMapKeyRef:
               name: aws-config
               key: AWS_REGION
-        - name: DDB_TABLE
-          valueFrom:
-            configMapKeyRef:
-              name: aws-config
-              key: DDB_TABLE
         volumeMounts:
         - name: code-volume
           mountPath: /app

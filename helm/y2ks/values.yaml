@@ -20,6 +20,8 @@ images:
   frontend: ""  # terraform apply 시 자동 주입 — 직접 수정 금지
   worker: ""    # terraform apply 시 자동 주입 — 직접 수정 금지
 
+adminToken: ""  # terraform apply --set adminToken=<YOUR_TOKEN> 으로 주입
+
 worker:
   minReplicas: 1
   maxReplicas: 50

@@ -22,6 +22,8 @@ spec:
         prometheus.io/scrape: "true"
         prometheus.io/port: "5000"
         prometheus.io/path: "/metrics"
+        checksum/code: {{ include (print $.Template.BasePath "/configmap-code.yaml") . | sha256sum }}
+        checksum/html: {{ include (print $.Template.BasePath "/configmap-html.yaml") . | sha256sum }}
     spec:
       serviceAccountName: worker-sa
       priorityClassName: y2ks-high
@@ -76,19 +78,24 @@ spec:
           value: "http://prometheus-server.monitoring.svc.cluster.local:80"
         - name: SQS_QUEUE_URL
           valueFrom:
-            configMapKeyRef:
-              name: aws-config
+            secretKeyRef:
+              name: y2ks-secrets
               key: SQS_QUEUE_URL
+        - name: DDB_TABLE
+          valueFrom:
+            secretKeyRef:
+              name: y2ks-secrets
+              key: DDB_TABLE
+        - name: ADMIN_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: y2ks-secrets
+              key: ADMIN_TOKEN
         - name: AWS_REGION
           valueFrom:
             configMapKeyRef:
               name: aws-config
               key: AWS_REGION
-        - name: DDB_TABLE
-          valueFrom:
-            configMapKeyRef:
-              name: aws-config
-              key: DDB_TABLE
         volumeMounts:
         - name: code-volume
           mountPath: /app
