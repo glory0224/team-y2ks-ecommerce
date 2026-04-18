@@ -15,6 +15,10 @@ spec:
       serviceAccountName: worker-sa
       restartPolicy: Never
       priorityClassName: y2ks-high
+      tolerations:
+      - key: karpenter
+        value: "true"
+        effect: NoSchedule
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -33,6 +37,11 @@ spec:
         env:
         - name: TARGET_URL
           value: "http://y2ks-frontend-svc"
+        - name: ADMIN_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: y2ks-secrets
+              key: ADMIN_TOKEN
         - name: K6_PROMETHEUS_RW_SERVER_URL
           value: "http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090/api/v1/write"
         - name: K6_PROMETHEUS_RW_TREND_STATS

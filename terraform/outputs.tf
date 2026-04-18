@@ -55,6 +55,11 @@ output "app_url" {
   value       = "http://${var.domain_name}"
 }
 
+output "grafana_url" {
+  description = "Grafana 모니터링 접속 URL"
+  value       = "http://grafana.${var.domain_name}"
+}
+
 output "next_steps" {
   description = "terraform apply 완료 후 실행 순서"
   value       = <<-EOT
@@ -72,8 +77,8 @@ output "next_steps" {
     - variables.tf의 team_member_usernames 등록된 팀원은 kubectl 권한 자동 부여
 
     [Grafana 접속]
-    kubectl get svc -n monitoring prometheus-grafana
-    → EXTERNAL-IP 로 브라우저 접속 (admin / variables.tf의 grafana_admin_password)
+    http://grafana.${var.domain_name}
+    → 계정: admin / grafana_admin_password 값
 
     [k6 부하 테스트]
     kubectl delete job k6-loadtest --ignore-not-found

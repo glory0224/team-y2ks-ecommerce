@@ -5,7 +5,6 @@ metadata:
   labels:
     app: frontend
 spec:
-  replicas: 2
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -27,20 +26,27 @@ spec:
     spec:
       serviceAccountName: worker-sa
       priorityClassName: y2ks-high
+      tolerations:
+      - key: karpenter
+        value: "true"
+        effect: NoSchedule
       affinity:
         nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-            - matchExpressions:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
               - key: node-type
                 operator: In
                 values: ["ondemand-1", "ondemand-2"]
         podAntiAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-          - labelSelector:
-              matchLabels:
-                app: frontend
-            topologyKey: kubernetes.io/hostname
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: frontend
+              topologyKey: kubernetes.io/hostname
       containers:
       - name: web
         image: "{{ .Values.images.frontend }}"
@@ -57,8 +63,7 @@ spec:
           timeoutSeconds: 5
           failureThreshold: 5
         livenessProbe:
-          httpGet:
-            path: /
+          tcpSocket:
             port: 5000
           initialDelaySeconds: 30
           periodSeconds: 10

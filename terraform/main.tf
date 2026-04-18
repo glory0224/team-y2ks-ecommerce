@@ -367,6 +367,9 @@ resource "null_resource" "install_keda" {
   provisioner "local-exec" {
     interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
     command     = <<-EOT
+      $ErrorActionPreference = "Stop"
+      aws eks update-kubeconfig --name ${aws_eks_cluster.main.name} --region ${var.aws_region}
+
       helm repo add kedacore https://kedacore.github.io/charts
       helm repo update
       helm upgrade --install keda kedacore/keda `
@@ -455,6 +458,7 @@ resource "null_resource" "install_y2ks" {
     account_id          = data.aws_caller_identity.current.account_id
     cluster_name        = var.cluster_name
     karpenter_node_role = aws_iam_role.karpenter_node.name
+    admin_token_hash    = sha256(var.admin_token)
     # 템플릿 파일 변경 감지 → terraform apply 시 자동 재배포
     config_hash = sha256(join("", [
       file("${path.module}/../helm/y2ks/templates/aws-config.yaml"),
@@ -462,6 +466,8 @@ resource "null_resource" "install_y2ks" {
       file("${path.module}/../helm/y2ks/templates/frontend.yaml"),
       file("${path.module}/../helm/y2ks/templates/worker.yaml"),
       file("${path.module}/../helm/y2ks/templates/keda.yaml"),
+      file("${path.module}/../helm/y2ks/templates/configmap-code.yaml"),
+      file("${path.module}/../helm/y2ks/templates/configmap-k6.yaml"),
     ]))
   }
 
@@ -473,13 +479,14 @@ resource "null_resource" "install_y2ks" {
       aws eks update-kubeconfig --name ${self.triggers.cluster_name} --region ap-northeast-2 2>$null
 
       # terraform apply 시 null_resource 교체(replace)에도 destroy provisioner가 실행됨
-      # EKS 클러스터가 ACTIVE 상태면 Helm 업그레이드인 것이므로 정리 작업 전부 건너뜀
-      $clusterStatus = aws eks describe-cluster --name ${self.triggers.cluster_name} --query "cluster.status" --output text --region ap-northeast-2 2>$null
-      if ($clusterStatus -eq "ACTIVE") {
-        Write-Host "[SKIP] 클러스터가 ACTIVE 상태 — terraform apply replace 감지, 정리 건너뜀"
+      # y2ks Helm release가 살아있으면 apply replace(업그레이드)이므로 정리 건너뜀
+      # (클러스터 ACTIVE 여부로 판단하면 destroy 시에도 ACTIVE라 잘못 skip됨)
+      helm status y2ks --namespace default 2>$null | Out-Null
+      if ($LASTEXITCODE -eq 0) {
+        Write-Host "[SKIP] y2ks Helm release 존재 — terraform apply replace 감지, 정리 건너뜀"
         exit 0
       }
-      Write-Host "클러스터 상태: $clusterStatus — terraform destroy 진행"
+      Write-Host "y2ks Helm release 없음 — terraform destroy 진행"
 
       Write-Host "=== [0/4] EKS Cluster SG 인바운드/아웃바운드 규칙 사전 정리 ==="
       # EKS가 자동 생성한 cluster SG의 규칙을 미리 제거해 VPC 삭제 블로킹 방지

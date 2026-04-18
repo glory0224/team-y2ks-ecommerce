@@ -37,10 +37,14 @@ spec:
           values: ["spot", "on-demand"]
         - key: karpenter.k8s.aws/instance-cpu
           operator: In
-          values: ["4", "8"]
+          values: ["2", "4", "8"]
         - key: karpenter.k8s.aws/instance-family
           operator: In
-          values: ["c5", "c5a", "m5", "m5a"]
+          values: ["t3", "t3a", "c5", "c5a", "m5", "m5a"]
+      taints:
+        - key: karpenter
+          value: "true"
+          effect: NoSchedule
       nodeClassRef:
         group: karpenter.k8s.aws
         kind: EC2NodeClass

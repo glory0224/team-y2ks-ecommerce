@@ -5,7 +5,6 @@ metadata:
   labels:
     app: worker
 spec:
-  replicas: 1
   selector:
     matchLabels:
       app: worker
@@ -16,6 +15,10 @@ spec:
     spec:
       serviceAccountName: worker-sa
       priorityClassName: y2ks-normal
+      tolerations:
+      - key: karpenter
+        value: "true"
+        effect: NoSchedule
       affinity:
         nodeAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:

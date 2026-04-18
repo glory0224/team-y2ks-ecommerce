@@ -31,7 +31,6 @@ variable "team_member_usernames" {
 variable "grafana_admin_password" {
   description = "Grafana admin 비밀번호"
   type        = string
-  default     = "admin123!"
   sensitive   = true
 }
 

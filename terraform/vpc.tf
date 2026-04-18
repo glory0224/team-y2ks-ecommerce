@@ -24,8 +24,27 @@ resource "aws_vpc" "main" {
       $VpcId = "${self.id}"
       Write-Host "=== VPC 삭제 전 잔여 리소스 정리 (VPC: $VpcId) ==="
 
-      # [1/3] in-use ENI 해제 대기 (EKS control plane ENI는 클러스터 삭제 후 AWS가 자동 해제)
-      Write-Host "[1/3] in-use ENI 해제 대기 (최대 3분)..."
+      # [1/4] K8s가 생성한 Classic LB / ALB / NLB 삭제 (EKS 삭제 후 남는 외부 LB)
+      Write-Host "[1/4] K8s 생성 Load Balancer 삭제..."
+      $lbs = aws elb describe-load-balancers `
+        --query "LoadBalancerDescriptions[?VPCId=='$VpcId'].LoadBalancerName" `
+        --output text --region ap-northeast-2 2>$null
+      foreach ($lb in ($lbs -split "\s+" | Where-Object { $_ })) {
+        Write-Host "  CLB 삭제: $lb"
+        aws elb delete-load-balancer --load-balancer-name $lb --region ap-northeast-2 2>$null
+      }
+      $albArns = aws elbv2 describe-load-balancers `
+        --query "LoadBalancers[?VpcId=='$VpcId'].LoadBalancerArn" `
+        --output text --region ap-northeast-2 2>$null
+      foreach ($arn in ($albArns -split "\s+" | Where-Object { $_ })) {
+        Write-Host "  ALB/NLB 삭제: $arn"
+        aws elbv2 delete-load-balancer --load-balancer-arn $arn --region ap-northeast-2 2>$null
+      }
+      Write-Host "  LB 삭제 후 ENI 해제 대기 (30초)..."
+      Start-Sleep -Seconds 30
+
+      # [2/4] in-use ENI 해제 대기 (EKS control plane ENI는 클러스터 삭제 후 AWS가 자동 해제)
+      Write-Host "[2/4] in-use ENI 해제 대기 (최대 3분)..."
       for ($i = 0; $i -lt 18; $i++) {
         $inuse = aws ec2 describe-network-interfaces `
           --filters "Name=vpc-id,Values=$VpcId" "Name=status,Values=in-use" `
@@ -38,8 +57,8 @@ resource "aws_vpc" "main" {
         Start-Sleep -Seconds 10
       }
 
-      # [2/3] available ENI 삭제
-      Write-Host "[2/3] available ENI 삭제..."
+      # [3/4] available ENI 삭제
+      Write-Host "[3/4] available ENI 삭제..."
       $avail = aws ec2 describe-network-interfaces `
         --filters "Name=vpc-id,Values=$VpcId" "Name=status,Values=available" `
         --query "NetworkInterfaces[].NetworkInterfaceId" --output text 2>$null
@@ -48,8 +67,8 @@ resource "aws_vpc" "main" {
         aws ec2 delete-network-interface --network-interface-id $eni 2>$null
       }
 
-      # [3/3] EKS 자동생성 SG 삭제 (Terraform 관리 외 — eks-cluster-sg-* 등, default 제외)
-      Write-Host "[3/3] 잔여 SG 삭제..."
+      # [4/4] EKS 자동생성 SG 삭제 (Terraform 관리 외 — eks-cluster-sg-* 등, default 제외)
+      Write-Host "[4/4] 잔여 SG 삭제..."
       $sgs = aws ec2 describe-security-groups `
         --filters "Name=vpc-id,Values=$VpcId" `
         --query "SecurityGroups[?GroupName!='default'].GroupId" --output text 2>$null
