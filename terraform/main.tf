@@ -478,12 +478,32 @@ resource "null_resource" "install_y2ks" {
       $ErrorActionPreference = "SilentlyContinue"
       aws eks update-kubeconfig --name ${self.triggers.cluster_name} --region ap-northeast-2 2>$null
 
-      # terraform apply 시 null_resource 교체(replace)에도 destroy provisioner가 실행됨
-      # y2ks Helm release가 살아있으면 apply replace(업그레이드)이므로 정리 건너뜀
-      # (클러스터 ACTIVE 여부로 판단하면 destroy 시에도 ACTIVE라 잘못 skip됨)
+      Write-Host "=== [pre] Karpenter/LB 사전 정리 (apply-replace/destroy 공통) ==="
+      # worker 스케일다운 → Karpenter가 새 노드 프로비저닝하는 것 방지
+      kubectl scale deployment y2ks-worker --replicas=0 -n default 2>$null
+      # Karpenter NodeClaim/NodePool 삭제 → Karpenter 관리 노드 제거 트리거
+      kubectl delete nodeclaims --all 2>$null
+      kubectl delete nodepool --all 2>$null
+      # LB 서비스 삭제 → AWS ELB 즉시 제거 (VPC 삭제 블로킹 방지)
+      kubectl delete svc y2ks-frontend-svc -n default 2>$null
+      kubectl delete svc prometheus-grafana -n monitoring 2>$null
+      # Karpenter EC2 인스턴스 완전 종료 대기 (최대 2분)
+      $elapsed = 0
+      while ($elapsed -lt 120) {
+        $count = aws ec2 describe-instances `
+          --filters "Name=tag:karpenter.sh/nodepool,Values=*" `
+                    "Name=instance-state-name,Values=pending,running,stopping" `
+          --query "length(Reservations[].Instances[])" --output text --region ap-northeast-2 2>$null
+        if (-not $count -or $count -eq "0") { Write-Host "[OK] Karpenter 노드 종료 완료 ($elapsed s)"; break }
+        Write-Host "Karpenter 노드 $count 개 종료 대기... ($elapsed s)"
+        Start-Sleep -Seconds 10; $elapsed += 10
+      }
+
+      # terraform apply -replace 감지: y2ks Helm release가 살아있으면 apply replace이므로
+      # helm uninstall 이후 단계는 건너뜀 (create provisioner가 재배포함)
       helm status y2ks --namespace default 2>$null | Out-Null
       if ($LASTEXITCODE -eq 0) {
-        Write-Host "[SKIP] y2ks Helm release 존재 — terraform apply replace 감지, 정리 건너뜀"
+        Write-Host "[SKIP] y2ks Helm release 존재 — terraform apply replace 감지, helm uninstall 건너뜀"
         exit 0
       }
       Write-Host "y2ks Helm release 없음 — terraform destroy 진행"
