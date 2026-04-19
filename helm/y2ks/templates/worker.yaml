@@ -21,13 +21,12 @@ spec:
         effect: NoSchedule
       affinity:
         nodeAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-          - weight: 100
-            preference:
-              matchExpressions:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
               - key: karpenter.sh/capacity-type
                 operator: In
-                values: ["spot"]
+                values: ["spot", "on-demand"]
       containers:
       - name: worker
         image: "{{ .Values.images.worker }}"

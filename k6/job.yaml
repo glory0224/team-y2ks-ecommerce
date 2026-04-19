@@ -5,7 +5,7 @@ metadata:
   labels:
     app: k6-loadtest
 spec:
-  ttlSecondsAfterFinished: 3600
+  ttlSecondsAfterFinished: 120
   backoffLimit: 0
   template:
     metadata:

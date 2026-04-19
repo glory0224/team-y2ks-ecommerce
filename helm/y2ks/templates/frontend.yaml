@@ -36,9 +36,9 @@ spec:
           - weight: 100
             preference:
               matchExpressions:
-              - key: node-type
+              - key: karpenter.sh/capacity-type
                 operator: In
-                values: ["ondemand-1", "ondemand-2"]
+                values: ["spot", "on-demand"]
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
           - weight: 100

@@ -659,7 +659,7 @@ resource "null_resource" "install_y2ks" {
       kubectl wait --for=condition=established crd/nodepools.karpenter.sh --timeout=120s
       helm upgrade --install y2ks ${path.module}/../helm/y2ks `
         --namespace default `
-        --set accountId=${data.aws_caller_identity.current.account_id} `
+        --set-string accountId=${data.aws_caller_identity.current.account_id} `
         --set region=${var.aws_region} `
         --set clusterName=${var.cluster_name} `
         --set workerRoleArn=${aws_iam_role.worker.arn} `
