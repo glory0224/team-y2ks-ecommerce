@@ -26,7 +26,7 @@ SQS_QUEUE_URL = os.environ.get("SQS_QUEUE_URL", "")
 PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://localhost:9090")
 
 MODEL = BedrockModel(
-    model_id="us.anthropic.claude-sonnet-4-5",
+    model_id="apac.anthropic.claude-sonnet-4-20250514-v1:0",
     region_name=AWS_REGION,
 )
 

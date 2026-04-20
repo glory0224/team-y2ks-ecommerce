@@ -51,7 +51,7 @@ spec:
         name: default
       expireAfter: 72h
   limits:
-    cpu: 120
+    cpu: "30" 120
     memory: 240Gi
   disruption:
     consolidationPolicy: WhenEmptyOrUnderutilized

@@ -16,6 +16,8 @@ Sherlock 스타일 Swarm 패턴 + 프롬프트 강화
 """
 
 import os
+os.environ["OTEL_SDK_DISABLED"] = "true"
+
 import re
 import sys
 import json
@@ -246,6 +248,40 @@ def send_slack_message(message: str, level: str = "info") -> str:
     except Exception as e:
         return f"Slack 전송 실패: {e}"
 
+@tool
+def edit_infrastructure_code(filepath: str, search_text: str, replace_text: str) -> str:
+    """인프라 코드(YAML, TF 등)를 직접 수정합니다. (GitOps Auto-Remediation)"""
+    try:
+        if not os.path.exists(filepath):
+            return f"파일을 찾을 수 없습니다: {filepath}"
+        with open(filepath, "r", encoding="utf-8") as f:
+            content = f.read()
+        if search_text not in content:
+            return "search_text가 파일 내에 존재하지 않습니다. 정확한 텍스트를 입력하세요."
+        
+        new_content = content.replace(search_text, replace_text)
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(new_content)
+        return f"파일 수정 완료: {filepath}\\n변경점: {search_text} -> {replace_text}"
+    except Exception as e:
+        return f"파일 수정 실패: {e}"
+
+@tool
+def create_gitops_pr(branch_name: str, commit_message: str) -> str:
+    """수정된 코드를 새로운 브랜치에 커밋하고 푸시하여 PR(CI/CD)을 유도합니다."""
+    try:
+        subprocess.run(["git", "checkout", "-b", branch_name], check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", commit_message], check=True, capture_output=True)
+        subprocess.run(["git", "push", "-u", "origin", branch_name], check=True, capture_output=True)
+        
+        subprocess.run(["git", "checkout", "-"], check=True, capture_output=True)
+        
+        return f"GitOps 브랜치 푸시 완료! 브랜치명: {branch_name}\\n커밋: {commit_message}\\n이제 CI/CD 파이프라인이 코드를 검증하고 팀원의 승인을 대기합니다."
+    except subprocess.CalledProcessError as e:
+        subprocess.run(["git", "checkout", "-"], capture_output=True)
+        return f"GitOps 푸시 실패: {e.stderr.decode('utf-8', errors='ignore') if e.stderr else e}"
+
 
 # ── DB 툴 ────────────────────────────────────────────────────
 
@@ -369,7 +405,8 @@ def calculate_cost_savings() -> str:
 
 EKS_TOOLS     = [get_all_pods, get_nodes, get_node_resources, get_pod_resources,
                  get_pending_pods, get_hpa, get_karpenter_status, get_events,
-                 describe_pod, get_pod_logs, get_sqs_depth, send_slack_message]
+                 describe_pod, get_pod_logs, get_sqs_depth, send_slack_message,
+                 edit_infrastructure_code, create_gitops_pr]
 
 DB_TOOLS      = [get_dynamodb_stats, detect_bot_patterns,
                  get_participation_timeline, send_slack_message]
@@ -413,7 +450,8 @@ EKS_SWARM_PROMPT = """당신은 EKS Agent — Y2KS 클러스터 운영 전문가
 ## 도구 선택 전략
 - 파드 개수/상태 질문 → get_all_pods 반드시 사용 (전체 네임스페이스 포함)
 - Pending 파드 → get_pending_pods → describe_pod(Events 확인) 순서
-- 전체 진단 → get_all_pods → get_node_resources 순서
+- 파드 이상/리소스 부족 원인 파악 시 → edit_infrastructure_code로 인프라 파일(예: karpenter.yaml) 수치를 직접 수정 (Auto-Remediation)
+- 코드 수정 후 → create_gitops_pr로 브랜치 커밋/푸시하여 CI/CD 유도
 - 2~3개 툴만 선택, 불필요한 중복 호출 금지
 
 ## 파드 집계 규칙
@@ -441,9 +479,10 @@ EKS_SWARM_PROMPT = """당신은 EKS Agent — Y2KS 클러스터 운영 전문가
 ### 조사 대상
 ### 발견 사항
 - **근본 원인**: (수치 포함)
+- **수행된 Auto-Remediation**: (코드 수정 내역 및 GitOps 브랜치명 명시)
 - **심각도**: Critical / Warning / Info
 - **신뢰도**: High(90%+) / Medium(70%+) / Low(50%+)
-### 즉시 조치
+### 즉시 조치 (PR 승인 대기 또는 추가 kubectl 명령어)
 ### 단기 권고
 ### 추가 조사 필요 여부 (핸드오프 대상 명시)
 
@@ -527,7 +566,8 @@ ORCHESTRATOR_PROMPT = """당신은 Y2KS 운영팀 팀장입니다. (Claude Sonne
 ## 출력 형식
 **근본 원인**: (인과관계 포함, 수치 필수)
 **현재 상황**: (각 전문가 발견사항 교차 분석)
-**즉시 조치**: (구체적 kubectl 명령어 포함)
+**수행된 자동화 조치(Auto-Remediation)**: (에이전트가 직접 수정한 코드 내용과 CI/CD PR 링크/브랜치명)
+**즉시 조치**: (운영자 승인 대기 메시지 등)
 **단기 권고**: (예방 조치 + 모니터링 기준)
 **신뢰도**: High/Medium/Low + 이유
 
@@ -615,7 +655,7 @@ def _route(question: str) -> list:
     return ["eks"]
 
 
-def run_agent(user_message: str) -> dict:
+async def run_agent(user_message: str) -> dict:
     """질문 라우팅 후 단일 or Swarm 실행"""
     routes = _route(user_message)
 
@@ -649,7 +689,7 @@ def run_agent(user_message: str) -> dict:
     enhanced_query = f"현재 시각: {current_time}\n\n질문: {user_message}"
 
     swarm  = Swarm(agents, max_handoffs=6)
-    result = asyncio.run(swarm.invoke_async(enhanced_query))
+    result = await swarm.invoke_async(enhanced_query)
 
     opinions = {}
     for name, node_result in result.results.items():
@@ -673,7 +713,7 @@ def run_agent(user_message: str) -> dict:
     return opinions
 
 
-def auto_diagnosis() -> str:
+async def auto_diagnosis() -> str:
     """전체 자동 진단 - Swarm으로 3전문가 협력"""
     print("\n[전체 자동 진단] Swarm 시작...")
 
@@ -695,7 +735,7 @@ def auto_diagnosis() -> str:
     )
 
     swarm  = Swarm(agents, max_handoffs=6)
-    result = asyncio.run(swarm.invoke_async(query))
+    result = await swarm.invoke_async(query)
 
     opinions = {}
     for name, node_result in result.results.items():
@@ -727,11 +767,11 @@ def auto_diagnosis() -> str:
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--auto":
-        auto_diagnosis()
+        asyncio.run(auto_diagnosis())
 
     elif len(sys.argv) > 2 and sys.argv[1] == "--query":
         q      = sys.argv[2]
-        result = run_agent(q)
+        result = asyncio.run(run_agent(q))
         print("__RESULT__" + json.dumps(result, ensure_ascii=False))
 
     else:
@@ -740,7 +780,7 @@ if __name__ == "__main__":
                 q = input("\n질문: ").strip()
                 if not q or q.lower() == "exit":
                     break
-                result = run_agent(q)
+                result = asyncio.run(run_agent(q))
                 for k, v in result.items():
                     print(f"\n{'='*40}\n[{k.upper()}]\n{v}")
             except KeyboardInterrupt:

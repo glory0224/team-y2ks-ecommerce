@@ -40,3 +40,16 @@ variable "admin_token" {
   default     = ""
   sensitive   = true
 }
+
+variable "domain_name" {
+  description = "서비스에 사용할 루트 도메인명 (예: y2ks.site)"
+  type        = string
+  default     = "y2ks.site"
+}
+
+variable "cloudflare_api_token" {
+  description = "Cloudflare API Token (Edit zone DNS + WAF 권한 필요)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
