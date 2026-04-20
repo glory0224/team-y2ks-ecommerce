@@ -5,7 +5,7 @@ metadata:
   labels:
     app: k6-loadtest
 spec:
-  ttlSecondsAfterFinished: 3600
+  ttlSecondsAfterFinished: 120
   backoffLimit: 0
   template:
     metadata:
@@ -15,14 +15,18 @@ spec:
       serviceAccountName: worker-sa
       restartPolicy: Never
       priorityClassName: y2ks-high
+      tolerations:
+      - key: karpenter
+        value: "true"
+        effect: NoSchedule
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
             - matchExpressions:
-              - key: node-type
+              - key: karpenter.sh/capacity-type
                 operator: In
-                values: ["ondemand-1", "ondemand-2"]
+                values: ["on-demand"]
       containers:
       - name: k6
         image: grafana/k6:latest
@@ -33,17 +37,22 @@ spec:
         env:
         - name: TARGET_URL
           value: "http://y2ks-frontend-svc"
+        - name: ADMIN_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: y2ks-secrets
+              key: ADMIN_TOKEN
         - name: K6_PROMETHEUS_RW_SERVER_URL
           value: "http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090/api/v1/write"
         - name: K6_PROMETHEUS_RW_TREND_STATS
           value: "p(50),p(95),p(99)"
         resources:
           requests:
-            cpu: 300m
-            memory: 512Mi
-          limits:
             cpu: "2"
-            memory: 1Gi
+            memory: 2Gi
+          limits:
+            cpu: "4"
+            memory: 4Gi
         volumeMounts:
         - name: k6-script
           mountPath: /scripts

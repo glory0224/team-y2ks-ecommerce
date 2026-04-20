@@ -5,7 +5,6 @@ metadata:
   labels:
     app: worker
 spec:
-  replicas: 1
   selector:
     matchLabels:
       app: worker
@@ -16,15 +15,18 @@ spec:
     spec:
       serviceAccountName: worker-sa
       priorityClassName: y2ks-normal
+      tolerations:
+      - key: karpenter
+        value: "true"
+        effect: NoSchedule
       affinity:
         nodeAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-          - weight: 100
-            preference:
-              matchExpressions:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
               - key: karpenter.sh/capacity-type
                 operator: In
-                values: ["spot"]
+                values: ["spot", "on-demand"]
       containers:
       - name: worker
         image: "{{ .Values.images.worker }}"

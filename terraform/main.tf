@@ -367,6 +367,9 @@ resource "null_resource" "install_keda" {
   provisioner "local-exec" {
     interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
     command     = <<-EOT
+      $ErrorActionPreference = "Stop"
+      aws eks update-kubeconfig --name ${aws_eks_cluster.main.name} --region ${var.aws_region}
+
       helm repo add kedacore https://kedacore.github.io/charts
       helm repo update
       helm upgrade --install keda kedacore/keda `
@@ -455,6 +458,7 @@ resource "null_resource" "install_y2ks" {
     account_id          = data.aws_caller_identity.current.account_id
     cluster_name        = var.cluster_name
     karpenter_node_role = aws_iam_role.karpenter_node.name
+    admin_token_hash    = sha256(var.admin_token)
     # 템플릿 파일 변경 감지 → terraform apply 시 자동 재배포
     config_hash = sha256(join("", [
       file("${path.module}/../helm/y2ks/templates/aws-config.yaml"),
@@ -462,6 +466,8 @@ resource "null_resource" "install_y2ks" {
       file("${path.module}/../helm/y2ks/templates/frontend.yaml"),
       file("${path.module}/../helm/y2ks/templates/worker.yaml"),
       file("${path.module}/../helm/y2ks/templates/keda.yaml"),
+      file("${path.module}/../helm/y2ks/templates/configmap-code.yaml"),
+      file("${path.module}/../helm/y2ks/templates/configmap-k6.yaml"),
     ]))
   }
 
@@ -471,6 +477,36 @@ resource "null_resource" "install_y2ks" {
     command     = <<-EOT
       $ErrorActionPreference = "SilentlyContinue"
       aws eks update-kubeconfig --name ${self.triggers.cluster_name} --region ap-northeast-2 2>$null
+
+      Write-Host "=== [pre] Karpenter/LB 사전 정리 (apply-replace/destroy 공통) ==="
+      # worker 스케일다운 → Karpenter가 새 노드 프로비저닝하는 것 방지
+      kubectl scale deployment y2ks-worker --replicas=0 -n default 2>$null
+      # Karpenter NodeClaim/NodePool 삭제 → Karpenter 관리 노드 제거 트리거
+      kubectl delete nodeclaims --all 2>$null
+      kubectl delete nodepool --all 2>$null
+      # LB 서비스 삭제 → AWS ELB 즉시 제거 (VPC 삭제 블로킹 방지)
+      kubectl delete svc y2ks-frontend-svc -n default 2>$null
+      kubectl delete svc prometheus-grafana -n monitoring 2>$null
+      # Karpenter EC2 인스턴스 완전 종료 대기 (최대 2분)
+      $elapsed = 0
+      while ($elapsed -lt 120) {
+        $count = aws ec2 describe-instances `
+          --filters "Name=tag:karpenter.sh/nodepool,Values=*" `
+                    "Name=instance-state-name,Values=pending,running,stopping" `
+          --query "length(Reservations[].Instances[])" --output text --region ap-northeast-2 2>$null
+        if (-not $count -or $count -eq "0") { Write-Host "[OK] Karpenter 노드 종료 완료 ($elapsed s)"; break }
+        Write-Host "Karpenter 노드 $count 개 종료 대기... ($elapsed s)"
+        Start-Sleep -Seconds 10; $elapsed += 10
+      }
+
+      # terraform apply -replace 감지: y2ks Helm release가 살아있으면 apply replace이므로
+      # helm uninstall 이후 단계는 건너뜀 (create provisioner가 재배포함)
+      helm status y2ks --namespace default 2>$null | Out-Null
+      if ($LASTEXITCODE -eq 0) {
+        Write-Host "[SKIP] y2ks Helm release 존재 — terraform apply replace 감지, helm uninstall 건너뜀"
+        exit 0
+      }
+      Write-Host "y2ks Helm release 없음 — terraform destroy 진행"
 
       Write-Host "=== [0/4] EKS Cluster SG 인바운드/아웃바운드 규칙 사전 정리 ==="
       # EKS가 자동 생성한 cluster SG의 규칙을 미리 제거해 VPC 삭제 블로킹 방지
@@ -643,7 +679,7 @@ resource "null_resource" "install_y2ks" {
       kubectl wait --for=condition=established crd/nodepools.karpenter.sh --timeout=120s
       helm upgrade --install y2ks ${path.module}/../helm/y2ks `
         --namespace default `
-        --set accountId=${data.aws_caller_identity.current.account_id} `
+        --set-string accountId=${data.aws_caller_identity.current.account_id} `
         --set region=${var.aws_region} `
         --set clusterName=${var.cluster_name} `
         --set workerRoleArn=${aws_iam_role.worker.arn} `

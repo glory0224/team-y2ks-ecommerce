@@ -24,5 +24,5 @@ adminToken: ""  # terraform apply --set adminToken=<YOUR_TOKEN> 으로 주입
 
 worker:
   minReplicas: 1
-  maxReplicas: 50
-  queueLength: "10"
+  maxReplicas: 100
+  queueLength: "5"

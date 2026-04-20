@@ -32,7 +32,7 @@ data:
     NICKNAME_RE = re.compile(r'^[a-zA-Z0-9가-힣_-]+$')
 
     def hash_password(password):
-        return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+        return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=4)).decode()
 
     def verify_password(password, hashed):
         try:
@@ -52,7 +52,11 @@ data:
     def require_admin(f):
         @wraps(f)
         def decorated(*args, **kwargs):
-            if not ADMIN_TOKEN or session.get('admin_authenticated'):
+            if not ADMIN_TOKEN:
+                return f(*args, **kwargs)
+            if session.get('admin_authenticated'):
+                return f(*args, **kwargs)
+            if request.headers.get('X-Admin-Token') == ADMIN_TOKEN:
                 return f(*args, **kwargs)
             return jsonify({'error': 'Unauthorized'}), 401
         return decorated
