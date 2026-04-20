@@ -6,8 +6,7 @@ import subprocess
 
 # 설정
 AWS_REGION = "ap-northeast-2"
-# Bedrock active model: Claude 3.5 Sonnet v2
-MODEL_ID = "anthropic.claude-3-5-sonnet-20241022-v2:0"
+MODEL_ID = "apac.anthropic.claude-sonnet-4-20250514-v1:0"
 
 def get_pr_diff():
     # 깃허브 액션 환경에서 현재 PR의 변경점을 가져옵니다.
