@@ -6,7 +6,7 @@ import subprocess
 
 # 설정
 AWS_REGION = "us-east-1"  # Bedrock 리전
-MODEL_ID = "us.anthropic.claude-3-5-haiku-20241022-v1:0" # 인퍼런스 프로필 아이디 사용
+MODEL_ID = "us.anthropic.claude-4-5-sonnet-20251112-v1:0" # 2026년 현재 Active한 최신 모델로 교체
 
 def get_pr_diff():
     # 깃허브 액션 환경에서 현재 PR의 변경점을 가져옵니다.
