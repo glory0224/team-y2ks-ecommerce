@@ -36,15 +36,16 @@ KEDA + Karpenter로 트래픽 스파이크를 자동 대응하며, Terraform 한
 
 | 서비스 | 역할 | 기술 |
 |--------|------|------|
-| y2ks-frontend | 쇼핑몰 UI + API 서버 | Flask + Gunicorn |
+| y2ks-frontend | 쇼핑몰 UI + API 서버 + Agent 프록시 | Flask + Gunicorn |
 | y2ks-worker | SQS 메시지 소비 → 쿠폰 당첨/낙첨 판정 | Python + boto3 |
 | y2ks-cart | 장바구니 서비스 | Flask |
 | y2ks-payment | 결제 서비스 | Flask |
 | y2ks-product | 상품 서비스 | Flask |
+| y2ks-agent | EKS 운영 자동화 멀티 에이전트 (HTTP 서버) | Python + Strands Agents + Bedrock |
 | Redis | 실시간 티켓 카운터 + 결과 임시 저장 | Redis Alpine |
 | DynamoDB | 쿠폰 발급 이력 영구 저장 | AWS DynamoDB (PAY_PER_REQUEST) |
 | SQS | 쿠폰 요청 비동기 처리 버퍼 | AWS SQS |
-| KEDA | SQS 큐 깊이 기반 Worker 자동 스케일링 (1~50) | KEDA v2 |
+| KEDA | SQS 큐 깊이 기반 Worker 자동 스케일링 (1~100) | KEDA v2 |
 | Karpenter | 부하 시 EC2 노드 자동 프로비저닝/제거 | Karpenter v1.1.1 |
 | Prometheus | 파드/노드 메트릭 수집 | kube-prometheus-stack |
 | Grafana | KEDA / Karpenter / k6 대시보드 시각화 | Grafana (monitoring 네임스페이스) |
@@ -58,16 +59,18 @@ KEDA + Karpenter로 트래픽 스파이크를 자동 대응하며, Terraform 한
 .
 ├── Dockerfile.frontend         # Frontend 이미지
 ├── Dockerfile.worker           # Worker 이미지
+├── Dockerfile.agent            # Agent 이미지 (kubectl + strands-agents + flask)
 │
 ├── terraform/                  # AWS 인프라 + 전체 배포 자동화
 │   ├── main.tf                 # Prometheus/KEDA/Karpenter/앱 배포 자동화
 │   ├── variables.tf            # 변수 (cluster_name, region, grafana_admin_password 등)
 │   ├── vpc.tf                  # VPC, 서브넷, 라우팅
 │   ├── eks.tf                  # EKS 클러스터, 노드그룹, 애드온, OIDC, 접근 권한
-│   ├── iam.tf                  # IAM Role/Policy (Worker, KEDA, Karpenter, k6)
+│   ├── iam.tf                  # IAM Role/Policy (Worker, KEDA, Karpenter, Agent, k6)
 │   ├── dynamodb.tf             # DynamoDB 쿠폰 클레임 테이블
 │   ├── sqs.tf                  # SQS 큐 (y2ks-queue)
 │   ├── ecr.tf                  # ECR 리포지토리 + Docker 이미지 빌드/푸시 자동화
+│   ├── route53.tf              # Route53 Hosted Zone 참조
 │   ├── github-oidc.tf          # GitHub Actions OIDC (k6 부하테스트용)
 │   └── outputs.tf              # 배포 후 참조값 출력 + next_steps 안내
 │
@@ -78,19 +81,34 @@ KEDA + Karpenter로 트래픽 스파이크를 자동 대응하며, Terraform 한
 │   ├── prometheus-values.yaml  # kube-prometheus-stack Helm values
 │   └── templates/
 │       ├── aws-config.yaml         # AWS 설정 ConfigMap
+│       ├── aws-secret.yaml         # AWS 시크릿 (SQS URL, DDB 테이블명 등)
 │       ├── configmap-code.yaml     # Python 코드 (app.py, worker.py)
 │       ├── configmap-html.yaml     # HTML 페이지 (main, event, admin)
 │       ├── configmap-k6.yaml       # k6 부하 테스트 스크립트
-│       ├── frontend.yaml           # Frontend Deployment + LoadBalancer Service
+│       ├── frontend.yaml           # Frontend Deployment + HPA + LoadBalancer Service
 │       ├── cart.yaml               # 장바구니 Deployment
 │       ├── payment.yaml            # 결제 Deployment
 │       ├── product.yaml            # 상품 Deployment
 │       ├── worker.yaml             # Worker Deployment (KEDA 스케일 대상)
 │       ├── redis.yaml              # Redis Deployment + Service
+│       ├── agent.yaml              # Agent Deployment + Service + RBAC
 │       ├── keda.yaml               # KEDA ScaledObject + TriggerAuthentication
 │       ├── karpenter.yaml          # Karpenter EC2NodeClass + NodePool
 │       ├── priority-classes.yaml   # PriorityClass 정의
 │       └── pdb.yaml                # PodDisruptionBudget (Redis, Frontend)
+│
+├── agents/                     # 멀티 에이전트 소스코드
+│   ├── eks_agent.py            # 에이전트 + 라우터 + 오케스트레이터 + HTTP 서버
+│   ├── eks_mcp_server.py       # MCP 툴 서버 (kubectl + boto3 + Prometheus)
+│   ├── slack_bot.py            # Slack 봇
+│   └── requirements.txt        # Python 패키지 목록
+│
+├── scripts/
+│   └── ai_reviewer.py          # GitHub Actions AI PR 리뷰어 (Bedrock)
+│
+├── .github/workflows/
+│   ├── ai-pr-reviewer.yml      # PR 오픈/업데이트 시 Claude 자동 코드 리뷰
+│   └── deploy-on-merge.yml     # main 머지 시 terraform apply + helm upgrade 자동 배포
 │
 └── k6/
     └── job.yaml                # k6 부하 테스트 Job (EKS 내 실행)
@@ -146,12 +164,13 @@ terraform apply
 `terraform apply` 한 번으로 아래가 모두 자동 실행됩니다:
 
 - VPC / EKS 클러스터 / IAM / DynamoDB / SQS 생성
-- ECR 리포지토리 생성 + Dockerfile 기반 이미지 빌드 & ECR 푸시
+- ECR 리포지토리 생성 + Dockerfile 기반 이미지 빌드 & ECR 푸시 (frontend / worker / agent)
 - 팀원 IAM 유저에게 kubectl 접근 권한 자동 부여
 - kubeconfig 자동 업데이트
 - Prometheus + Grafana / KEDA / Karpenter Helm 설치
-- worker-sa ServiceAccount 생성 + IRSA 연결
-- Y2KS 앱 전체 배포 (Frontend, Worker, Cart, Payment, Product, Redis)
+- worker-sa / agent-sa ServiceAccount 생성 + IRSA 연결
+- Route53 DNS 레코드 자동 생성 (y2ks.site, grafana.y2ks.site)
+- Y2KS 앱 전체 배포 (Frontend, Worker, Cart, Payment, Product, Redis, Agent)
 
 ---
 
@@ -198,11 +217,13 @@ kubectl get svc y2ks-frontend-svc
 | 쿠폰 수량 | 기본값 100장 (`helm/y2ks/values.yaml`의 `ticketCount`로 조정) |
 | SQS 큐 | y2ks-queue |
 | DynamoDB 테이블 | y2ks-coupon-claims |
-| KEDA 스케일 범위 | Worker 1 ~ 50개 |
-| KEDA 트리거 | 메시지 10개당 Worker 1개 |
-| Karpenter 인스턴스 | CPU 8코어 미만 (On-Demand + Spot 혼합) |
-| Karpenter CPU 한도 | 20코어 |
+| KEDA 스케일 범위 | Worker 1 ~ 100개 |
+| KEDA 트리거 | 메시지 5개당 Worker 1개 |
+| Karpenter 인스턴스 | t3/t3a/c5/m5 계열 2~8코어 (On-Demand + Spot 혼합) |
+| Karpenter CPU 한도 | 120코어 |
+| Karpenter Memory 한도 | 240Gi |
 | Karpenter consolidation | 10분 후 통합 |
+| 접속 도메인 | http://y2ks.site (frontend), http://grafana.y2ks.site (Grafana) |
 | Grafana 비밀번호 | `variables.tf`의 `grafana_admin_password` (기본값: `admin123!`) |
 
 ---
@@ -214,7 +235,85 @@ kubectl get svc y2ks-frontend-svc
 | `y2ks-critical` | 100,000 | Redis | 절대 선점 불가 |
 | `y2ks-high` | 10,000 | Frontend, k6 | 트래픽 스파이크 시에도 항상 보장 |
 | `y2ks-normal` | 1,000 | Worker | 리소스 부족 시 선점 허용 |
-| `y2ks-low` | 100 | Cart / Payment / Product | Karpenter 한도 초과 시 Worker에게 자리 양보 |
+| `y2ks-low` | 100 | Cart / Payment / Product / Agent | Karpenter 한도 초과 시 Worker에게 자리 양보 |
+
+---
+
+## 노드 구성 및 파드 배치
+
+### Apply 직후 (평상시)
+
+온디맨드 노드그룹 2개가 항상 고정 실행됩니다.
+
+```
+[ondemand-1 노드] t3.medium / AZ-a
+  ├── Redis          (y2ks-critical / node-type=ondemand-1 고정)
+  └── Payment        (y2ks-low     / node-type=ondemand-1 우선)
+
+[ondemand-2 노드] t3.medium / AZ-b
+  ├── Cart           (y2ks-low     / node-type=ondemand-2 우선)
+  └── Product        (y2ks-low     / node-type=ondemand-2 우선)
+
+[Karpenter 노드] Spot/On-Demand / AZ 자동 선택
+  ├── Frontend × 2   (y2ks-high    / Karpenter 노드)
+  ├── Worker × 1     (y2ks-normal  / Karpenter 노드)
+  └── Agent × 1      (y2ks-low     / Karpenter 노드)
+```
+
+```powershell
+# 평상시 파드/노드 확인
+kubectl get pods -n default -o wide
+kubectl get nodes
+```
+
+예시 출력:
+```
+NAME                            READY   STATUS    NODE
+redis-xxx                       1/1     Running   ip-192-168-3-xxx   (ondemand-1 / AZ-a)
+y2ks-payment-xxx                1/1     Running   ip-192-168-3-xxx   (ondemand-1 / AZ-a)
+y2ks-cart-xxx                   1/1     Running   ip-192-168-47-xxx  (ondemand-2 / AZ-b)
+y2ks-product-xxx                1/1     Running   ip-192-168-47-xxx  (ondemand-2 / AZ-b)
+y2ks-frontend-xxx (×2)          1/1     Running   ip-192-168-xx-xxx  (Karpenter / Spot)
+y2ks-worker-xxx                 1/1     Running   ip-192-168-xx-xxx  (Karpenter / Spot)
+y2ks-agent-xxx                  1/1     Running   ip-192-168-xx-xxx  (Karpenter / Spot)
+```
+
+### 부하테스트 시 (k6 실행 중)
+
+SQS 메시지가 쌓이면 KEDA가 Worker를 스케일아웃하고, Karpenter가 노드를 자동 추가합니다.
+
+```
+[ondemand-1 노드] t3.medium        — 변화 없음
+[ondemand-2 노드] t3.medium        — 변화 없음
+
+[Karpenter 노드 1~N] Spot/On-Demand — 자동 추가
+  ├── Frontend × 2~12  (HPA: CPU 60% 기준 최대 12개)
+  ├── Worker  × 1~100  (KEDA: SQS 메시지 5개당 1개 / 최대 100개)
+  ├── Agent   × 1      (변화 없음)
+  └── k6      × 1      (y2ks-high / 부하 생성기)
+```
+
+```powershell
+# 부하테스트 중 실시간 파드 스케일 확인
+kubectl get pods -n default -l app=worker --watch
+kubectl get nodeclaims   # Karpenter가 생성한 노드 확인
+kubectl top nodes        # 노드별 CPU/Memory 사용량
+```
+
+예시 출력 (VU 200 구간):
+```
+NAME                 READY   STATUS    RESTARTS
+y2ks-worker-xxx-1    1/1     Running   0         ← KEDA 스케일아웃
+y2ks-worker-xxx-2    1/1     Running   0
+...
+y2ks-worker-xxx-N    1/1     Running   0         ← 최대 100개까지
+
+NAME                                    STATUS   INSTANCE-TYPE
+default-xxxxx (Karpenter NodeClaim)     Ready    t3.medium     ← 자동 추가
+default-yyyyy (Karpenter NodeClaim)     Ready    t3a.large
+```
+
+부하 종료 후 10분 내 Karpenter가 빈 노드를 자동 반납합니다.
 
 ---
 
@@ -298,7 +397,7 @@ terraform apply
 ```
 
 `helm/y2ks/templates/` 파일 변경 시 자동 감지 후 재배포됩니다.  
-`Dockerfile.frontend` 또는 `Dockerfile.worker` 변경 시 ECR 이미지도 자동으로 재빌드 & 푸시됩니다.
+`Dockerfile.frontend` / `Dockerfile.worker` / `Dockerfile.agent` 변경 시 ECR 이미지도 자동으로 재빌드 & 푸시됩니다.
 
 ---
 
@@ -323,32 +422,45 @@ terraform destroy
 ## 멀티 에이전트
 
 AWS Strands Agents SDK + Amazon Bedrock 기반의 EKS 운영 자동화 에이전트입니다.  
-관리자 페이지(`/admin`)에서 질문을 입력하면 에이전트가 자동으로 전문가를 선택해 분석합니다.
+관리자 페이지(`/admin`)에서 질문을 입력하면 에이전트가 자동으로 전문가를 선택해 분석합니다.  
+EKS 클러스터 내 파드(`y2ks-agent`)로 상시 실행되며, frontend가 `/api/agent/*`로 프록시하여 연결합니다.
 
 ### 구성
 
 ```
 사용자 질문 (관리자 페이지 / Slack)
         ↓
-   [Router] - Claude Sonnet 4.6
+   [Router] - Claude Sonnet 4
         ↓
 단일 전문가              복수 전문가
     ↓                       ↓
 직접 처리             전문가끼리 핸드오프
                     EKS ↔ DB ↔ Observe
                           ↓
-               [Orchestrator] - Claude Sonnet 4.6
+               [Orchestrator] - Claude Sonnet 4
 ```
 
 | 에이전트 | 모델 | 담당 |
 |---------|------|------|
-| Router | Claude Sonnet 4.6 | 질문 분석 → 전문가 선택 |
-| EKS Agent | Claude Haiku 3 | kubectl / KEDA / Karpenter / SQS |
-| DB Agent | Claude Haiku 3 | DynamoDB / 봇 탐지 / 참여 분석 |
-| Observe Agent | Claude Haiku 3 | 리소스 / 비용 / 성능 |
-| Orchestrator | Claude Sonnet 4.6 | 교차 분석 + 최종 판단 |
+| Router | Claude Sonnet 4 (`apac.anthropic.claude-sonnet-4-20250514-v1:0`) | 질문 분석 → 전문가 선택 |
+| EKS Agent | Claude Sonnet 4 | kubectl / KEDA / Karpenter / SQS |
+| DB Agent | Claude Sonnet 4 | DynamoDB / 봇 탐지 / 참여 분석 |
+| Observe Agent | Claude Sonnet 4 | 리소스 / 비용 / 성능 |
+| Orchestrator | Claude Sonnet 4 | 교차 분석 + 최종 판단 |
 
-### 설치
+### 배포 구조
+
+`terraform apply` 시 자동으로 EKS 클러스터 내 파드로 배포됩니다.
+
+```
+y2ks-agent 파드 (Karpenter 노드, Flask HTTP 서버 8080)
+    ↑ /api/agent/query
+y2ks-frontend 파드 (프록시)
+    ↑ /admin 페이지
+사용자 브라우저
+```
+
+### 로컬 실행 (개발용)
 
 > ⚠️ Python 3.14는 anyio 4.x와 충돌합니다. **Python 3.12** 사용하세요.
 
@@ -358,12 +470,11 @@ winget install Python.Python.3.12
 cd agents
 py -3.12 -m venv venv312
 venv312\Scripts\activate
-pip install strands-agents boto3 python-dotenv slack_bolt
+pip install strands-agents boto3 python-dotenv slack_bolt flask
 ```
 
 AWS 콘솔 → Bedrock → Model access에서 아래 모델 활성화 필요:
 - `Claude Sonnet 4` (APAC 리전)
-- `Claude Haiku 3` (APAC 리전)
 
 ### 환경변수
 
@@ -383,6 +494,9 @@ SLACK_APP_TOKEN=xapp-...
 cd agents
 venv312\Scripts\activate
 
+# HTTP 서버 모드 (K8s 파드 실행 방식 — 로컬 테스트용)
+python eks_agent.py --serve
+
 # Slack 봇
 python slack_bot.py
 
@@ -395,11 +509,11 @@ python eks_agent.py --auto           # 전체 자동 진단
 
 ```
 agents/
-├── eks_agent.py        # 에이전트 + 라우터 + 오케스트레이터
+├── eks_agent.py        # 에이전트 + 라우터 + 오케스트레이터 + HTTP 서버
 ├── eks_mcp_server.py   # MCP 툴 서버 (kubectl + boto3 + Prometheus)
 ├── slack_bot.py        # Slack 봇
 ├── main.py             # 순차 실행 버전
 ├── requirements.txt    # Python 패키지 목록
-└── .env                # 환경변수
+└── .env                # 환경변수 (gitignore 처리됨)
 ```
 
