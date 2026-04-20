@@ -46,11 +46,11 @@ MAX_OUT       = 8000
 
 # ── 모델 ─────────────────────────────────────────────────────
 ORCHESTRATOR_MODEL = BedrockModel(
-    model_id="apac.anthropic.claude-sonnet-4-20250514-v1:0",
+    model_id="apac.anthropic.claude-haiku-4-5-20251001",
     region_name=AWS_REGION,
 )
 SPECIALIST_MODEL = BedrockModel(
-    model_id="apac.anthropic.claude-sonnet-4-20250514-v1:0",
+    model_id="apac.anthropic.claude-haiku-4-5-20251001",
     region_name=AWS_REGION,
 )
 
