@@ -1,13 +1,47 @@
 venv/
 .venv/
+venv312/
+helm/y2ks/templates/agent-secret.yaml
+terraform/terraform.tfvars
+agents/final_report.md
+architecture_with_agent.html
 __pycache__/
 *.py[cod]
-.env
-.terraform/
 .terraform.lock.hcl
 terraform.tfstate
 terraform.tfstate.backup
+
+
+# ==============================================================================
+# 프로젝트명: team-y2ks-ecommerce
+# 규칙: 보안 사고(과금/해킹) 방지 및 팀원 간 로컬 환경 충돌 방지
+# ==============================================================================
+
+### 1. 인증 및 보안 (유출 시 계정 탈취 및 과금 폭탄 위험) ###
+.aws/
+*.pem
+*.tfvars
+.env
+.kube/
+kubeconfig
+
+### 2. 인프라 도구 (중복 다운로드 방지 및 내부 상태 보호) ###
+.terraform/
+*.tfstate
+*.tfstate.*
+*.retry
+
+### 3. 컨테이너 및 로그 (불필요한 기록 제외) ###
+.docker/
+docker-compose.override.yml
+*.log
+
+### 4. 운영체제 및 에디터 (개인 환경 차이로 인한 충돌 방지) ###
 .DS_Store
+.vscode/
 node_modules/
 dist/
 build/
+### 5. AI Tool Metadata
+.kiro/
+.claude/
