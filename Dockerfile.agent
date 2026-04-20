@@ -1,0 +1,24 @@
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && curl -LO "https://dl.k8s.io/release/$(curl -Ls https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
+    && install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl \
+    && rm kubectl \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir \
+    strands-agents \
+    strands-agents-tools \
+    boto3 \
+    python-dotenv \
+    flask
+
+COPY agents/eks_agent.py /app/eks_agent.py
+COPY agents/eks_mcp_server.py /app/eks_mcp_server.py
+
+ENV PYTHONUNBUFFERED=1
+
+CMD ["python", "-u", "eks_agent.py", "--serve"]

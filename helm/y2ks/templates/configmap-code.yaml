@@ -6,7 +6,7 @@ data:
   app.py: |
     from flask import Flask, jsonify, request, session, redirect
     from functools import wraps
-    import boto3, redis, json, os, random, string, re, base64, bcrypt, hashlib
+    import boto3, redis, json, os, random, string, re, base64, bcrypt, hashlib, urllib.request, urllib.error
     from prometheus_flask_exporter import PrometheusMetrics
 
     app = Flask(__name__)
@@ -305,6 +305,39 @@ data:
                 print(f'DynamoDB reset warning: {e}', flush=True)
         msg = f'티켓 {TICKET_COUNT}장, SQS 큐, 참여자 목록이 초기화되었습니다.' if keep_logs else f'티켓 {TICKET_COUNT}장, SQS 큐, DynamoDB, 참여자 목록이 초기화되었습니다.'
         return jsonify({'success': True, 'message': msg})
+
+    AGENT_SERVICE_URL = os.environ.get('AGENT_SERVICE_URL', 'http://agent-service:8080')
+
+    @app.route('/api/agent/query', methods=['POST'])
+    @require_admin
+    def agent_query():
+        body = request.get_data()
+        try:
+            req = urllib.request.Request(
+                f'{AGENT_SERVICE_URL}/api/query',
+                data=body,
+                headers={'Content-Type': 'application/json'},
+                method='POST'
+            )
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                return app.response_class(resp.read(), status=resp.status, mimetype='application/json')
+        except urllib.error.URLError as e:
+            return jsonify({'error': f'Agent 서비스 연결 실패: {e}'}), 502
+
+    @app.route('/api/agent/auto-diagnosis', methods=['POST'])
+    @require_admin
+    def agent_auto_diagnosis():
+        try:
+            req = urllib.request.Request(
+                f'{AGENT_SERVICE_URL}/api/auto-diagnosis',
+                data=b'{}',
+                headers={'Content-Type': 'application/json'},
+                method='POST'
+            )
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                return app.response_class(resp.read(), status=resp.status, mimetype='application/json')
+        except urllib.error.URLError as e:
+            return jsonify({'error': f'Agent 서비스 연결 실패: {e}'}), 502
 
     if __name__ == '__main__':
         app.run(host='0.0.0.0', port=5000, debug=False)

@@ -7,6 +7,7 @@ region: "ap-northeast-2"
 clusterName: "y2ks-eks-cluster"
 workerRoleArn: ""
 karpenterNodeRoleName: ""
+agentRoleArn: ""  # terraform apply 시 자동 주입
 
 # ============================================================
 # 앱 설정 — 필요 시 수정 가능
@@ -19,6 +20,7 @@ ticketCount: 100
 images:
   frontend: ""  # terraform apply 시 자동 주입 — 직접 수정 금지
   worker: ""    # terraform apply 시 자동 주입 — 직접 수정 금지
+  agent: ""     # terraform apply 시 자동 주입 — 직접 수정 금지
 
 adminToken: ""  # terraform apply --set adminToken=<YOUR_TOKEN> 으로 주입
 

@@ -768,8 +768,49 @@ async def auto_diagnosis() -> str:
     return full_report
 
 
+def _serve():
+    """K8s 배포용 HTTP 서버 모드. frontend가 /api/agent/* 로 프록시하여 호출."""
+    try:
+        from flask import Flask as _Flask, request as _request, jsonify as _jsonify
+    except ImportError:
+        print("[ERROR] flask 미설치. pip install flask")
+        sys.exit(1)
+
+    _app = _Flask(__name__)
+
+    @_app.route("/healthz")
+    def _health():
+        return "ok", 200
+
+    @_app.route("/api/query", methods=["POST"])
+    def _query():
+        body = _request.get_json(silent=True) or {}
+        message = body.get("message", "")
+        if not message:
+            return _jsonify({"ok": False, "error": "message 필드 필요"}), 400
+        try:
+            result = asyncio.run(run_agent(message))
+            return _jsonify({"ok": True, "result": result})
+        except Exception as e:
+            return _jsonify({"ok": False, "error": str(e)}), 500
+
+    @_app.route("/api/auto-diagnosis", methods=["POST"])
+    def _auto():
+        try:
+            report = asyncio.run(auto_diagnosis())
+            return _jsonify({"ok": True, "result": report})
+        except Exception as e:
+            return _jsonify({"ok": False, "error": str(e)}), 500
+
+    print("[Agent HTTP Server] 0.0.0.0:8080 시작")
+    _app.run(host="0.0.0.0", port=8080, debug=False, threaded=True)
+
+
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "--auto":
+    if len(sys.argv) > 1 and sys.argv[1] == "--serve":
+        _serve()
+
+    elif len(sys.argv) > 1 and sys.argv[1] == "--auto":
         asyncio.run(auto_diagnosis())
 
     elif len(sys.argv) > 2 and sys.argv[1] == "--query":

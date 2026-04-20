@@ -9,10 +9,7 @@ terraform {
       source  = "hashicorp/tls"
       version = "~> 4.0"
     }
-    cloudflare = {
-      source  = "cloudflare/cloudflare"
-      version = "~> 4.0"
-    }
+
   }
 
   backend "s3" {
@@ -470,6 +467,7 @@ resource "null_resource" "install_y2ks" {
       file("${path.module}/../helm/y2ks/templates/frontend.yaml"),
       file("${path.module}/../helm/y2ks/templates/worker.yaml"),
       file("${path.module}/../helm/y2ks/templates/keda.yaml"),
+      file("${path.module}/../helm/y2ks/templates/agent.yaml"),
       file("${path.module}/../helm/y2ks/templates/configmap-code.yaml"),
       file("${path.module}/../helm/y2ks/templates/configmap-k6.yaml"),
     ]))
@@ -687,9 +685,11 @@ resource "null_resource" "install_y2ks" {
         --set region=${var.aws_region} `
         --set clusterName=${var.cluster_name} `
         --set workerRoleArn=${aws_iam_role.worker.arn} `
+        --set agentRoleArn=${aws_iam_role.agent.arn} `
         --set karpenterNodeRoleName=${aws_iam_role.karpenter_node.name} `
         --set images.frontend=${aws_ecr_repository.frontend.repository_url}:latest `
         --set images.worker=${aws_ecr_repository.worker.repository_url}:latest `
+        --set images.agent=${aws_ecr_repository.agent.repository_url}:latest `
         --set adminToken="${var.admin_token}"
     EOT
   }

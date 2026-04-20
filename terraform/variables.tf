@@ -41,9 +41,3 @@ variable "admin_token" {
   sensitive   = true
 }
 
-variable "cloudflare_api_token" {
-  description = "Cloudflare API 토큰"
-  type        = string
-  sensitive   = true
-  default     = ""
-}

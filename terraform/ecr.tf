@@ -22,6 +22,16 @@ resource "aws_ecr_repository" "worker" {
   }
 }
 
+resource "aws_ecr_repository" "agent" {
+  name                 = "y2ks-agent"
+  image_tag_mutability = "MUTABLE"
+  force_delete         = true
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+}
+
 # ============================================================
 # Docker 이미지 빌드 & ECR 푸시
 # terraform apply 시 Dockerfile 변경 감지 → 자동 재빌드
@@ -30,6 +40,7 @@ resource "null_resource" "build_and_push_images" {
   triggers = {
     frontend_dockerfile = sha256(file("${path.module}/../Dockerfile.frontend"))
     worker_dockerfile   = sha256(file("${path.module}/../Dockerfile.worker"))
+    agent_dockerfile    = sha256(file("${path.module}/../Dockerfile.agent"))
   }
 
   provisioner "local-exec" {
@@ -55,6 +66,12 @@ resource "null_resource" "build_and_push_images" {
       docker push "${aws_ecr_repository.worker.repository_url}:latest"
       if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] worker 푸시 실패"; exit 1 }
 
+      Write-Host "=== agent 이미지 빌드 & 푸시 ==="
+      docker build -t y2ks-agent -f ${path.module}/../Dockerfile.agent ${path.module}/..
+      docker tag y2ks-agent:latest "${aws_ecr_repository.agent.repository_url}:latest"
+      docker push "${aws_ecr_repository.agent.repository_url}:latest"
+      if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] agent 푸시 실패"; exit 1 }
+
       Write-Host "=== 빌드 & 푸시 완료 ==="
     EOT
   }
@@ -62,6 +79,7 @@ resource "null_resource" "build_and_push_images" {
   depends_on = [
     aws_ecr_repository.frontend,
     aws_ecr_repository.worker,
+    aws_ecr_repository.agent,
     null_resource.kubeconfig,
   ]
 }

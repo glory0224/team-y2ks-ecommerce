@@ -101,6 +101,8 @@ spec:
             configMapKeyRef:
               name: aws-config
               key: AWS_REGION
+        - name: AGENT_SERVICE_URL
+          value: "http://agent-service:8080"
         volumeMounts:
         - name: code-volume
           mountPath: /app
