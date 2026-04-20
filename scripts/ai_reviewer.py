@@ -18,7 +18,16 @@ def get_pr_diff():
         return f"Diff 추출 실패: {e}"
 
 def get_ai_review(diff):
-    client = boto3.client("bedrock-runtime", region_name=AWS_REGION)
+    # 환경변수에서 인증 정보 가져오기 (공백/줄바꿈 완벽 제거)
+    access_key = os.environ.get("AWS_ACCESS_KEY_ID", "").strip()
+    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "").strip()
+    
+    client = boto3.client(
+        "bedrock-runtime", 
+        region_name=AWS_REGION,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key
+    )
     
     prompt = f"""당신은 최고의 SRE 및 클라우드 아키텍트입니다.
 아래의 코드 변경사항(Diff)은 Y2KS EKS 인프라 자율 운영 에이전트가 생성한 것입니다.
