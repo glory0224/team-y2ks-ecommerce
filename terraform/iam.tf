@@ -338,3 +338,82 @@ resource "aws_cloudwatch_event_target" "karpenter_scheduled_change" {
   rule = aws_cloudwatch_event_rule.karpenter_scheduled_change.name
   arn  = aws_sqs_queue.karpenter_interruption.arn
 }
+
+# ============================================================
+# Agent IAM
+# ============================================================
+resource "aws_iam_policy" "agent" {
+  name        = "Y2ksAgentPolicy"
+  description = "Bedrock, DynamoDB, SQS read, EKS describe permissions for the agent"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "BedrockAccess"
+        Effect = "Allow"
+        Action = [
+          "bedrock:*"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "DynamoDBReadAccess"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:Query",
+          "dynamodb:Scan",
+          "dynamodb:DescribeTable"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "SQSReadAccess"
+        Effect = "Allow"
+        Action = [
+          "sqs:ReceiveMessage",
+          "sqs:GetQueueAttributes",
+          "sqs:GetQueueUrl"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "EKSDescribeAccess"
+        Effect = "Allow"
+        Action = [
+          "eks:DescribeCluster",
+          "eks:ListClusters"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role" "agent" {
+  name        = "Y2ksAgentRole"
+  description = "IRSA role for agent-sa ServiceAccount"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Federated = aws_iam_openid_connect_provider.eks.arn
+      }
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringEquals = {
+          "${local.oidc_issuer}:sub" = "system:serviceaccount:default:agent-sa"
+          "${local.oidc_issuer}:aud" = "sts.amazonaws.com"
+        }
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "agent_main" {
+  role       = aws_iam_role.agent.name
+  policy_arn = aws_iam_policy.agent.arn
+}

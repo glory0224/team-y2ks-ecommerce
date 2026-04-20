@@ -40,3 +40,4 @@ variable "admin_token" {
   default     = ""
   sensitive   = true
 }
+

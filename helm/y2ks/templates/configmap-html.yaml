@@ -433,8 +433,8 @@ data:
 
     // ── 멀티에이전트 채팅 (실제 API 연동) ────────────────
     var agentBusy = false;
-    // 에이전트 API 주소: 같은 도메인이면 상대경로, 아니면 직접 지정
-    var AGENT_API = window.AGENT_API_URL || 'https://constant-unviable-dispersal.ngrok-free.dev';
+    // frontend가 /api/agent/* 로 프록시 → 클러스터 내 agent-service:8080 으로 중계
+    var AGENT_API = '';
 
     var AGENT_META = {
       eks:     { label: 'EKS Agent',     type: 'agent',  tag: 'EKS' },
@@ -576,7 +576,7 @@ data:
       var thinking = addThinking(body);
 
       try {
-        var res = await fetch(AGENT_API + '/api/query', {
+        var res = await fetch(AGENT_API + '/api/agent/query', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({message: text})
@@ -607,7 +607,7 @@ data:
       var thinking = addThinking(body);
 
       try {
-        var res = await fetch(AGENT_API + '/api/auto-diagnosis', { method: 'POST' });
+        var res = await fetch(AGENT_API + '/api/agent/auto-diagnosis', { method: 'POST' });
         var data = await res.json();
         thinking.remove();
         if (data.ok && data.result) {
