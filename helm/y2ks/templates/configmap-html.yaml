@@ -516,16 +516,52 @@ data:
     function addLogCard(container, type, tag, content) {
       var card = document.createElement('div');
       card.className = 'log-card';
-      var escaped = content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      card.innerHTML = '<div class="log-card-header"><div class="log-card-meta"><span class="lc-type">agent</span><span class="lc-tag lc-' + type + '">' + tag + '</span></div><span class="lc-time">' + nowTime() + '</span></div><div class="log-card-body">' + escaped + '</div>';
+      card.innerHTML = '<div class="log-card-header"><div class="log-card-meta"><span class="lc-type">agent</span><span class="lc-tag lc-' + type + '">' + tag + '</span></div><span class="lc-time">' + nowTime() + '</span></div><div class="log-card-body">' + mdToHtml(content) + '</div>';
       container.appendChild(card);
       scrollBottom();
+    }
+
+    function mdToHtml(text) {
+      // <result> 태그 제거
+      text = text.replace(/<\/?result>/g, '');
+      // 코드블록
+      text = text.replace(/```[\s\S]*?```/g, function(m) {
+        var code = m.replace(/^```[^\n]*\n?/, '').replace(/```$/, '');
+        return '<pre><code>' + code.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</code></pre>';
+      });
+      // h3 h2 h1
+      text = text.replace(/^### (.+)$/mg, '<h3>$1</h3>');
+      text = text.replace(/^## (.+)$/mg, '<h2>$1</h2>');
+      text = text.replace(/^# (.+)$/mg, '<h1>$1</h1>');
+      // bold, italic
+      text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
+      // 수평선
+      text = text.replace(/^---+$/mg, '<hr>');
+      // 리스트
+      text = text.replace(/^(\s*[-•] .+)(\n\s*[-•] .+)*/mg, function(m) {
+        var items = m.split('\n').filter(Boolean).map(function(l) {
+          return '<li>' + l.replace(/^\s*[-•] /, '') + '</li>';
+        });
+        return '<ul>' + items.join('') + '</ul>';
+      });
+      // 번호 리스트
+      text = text.replace(/^(\s*\d+\. .+)(\n\s*\d+\. .+)*/mg, function(m) {
+        var items = m.split('\n').filter(Boolean).map(function(l) {
+          return '<li>' + l.replace(/^\s*\d+\. /, '') + '</li>';
+        });
+        return '<ol>' + items.join('') + '</ol>';
+      });
+      // 빈줄을 <br>
+      text = text.replace(/\n{2,}/g, '<br><br>');
+      text = text.replace(/\n/g, '<br>');
+      return text.trim();
     }
 
     function addFinalMsg(body, content) {
       var el = document.createElement('div');
       el.className = 'msg-final';
-      el.textContent = content;
+      el.innerHTML = mdToHtml(content);
       body.appendChild(el);
       scrollBottom();
     }
