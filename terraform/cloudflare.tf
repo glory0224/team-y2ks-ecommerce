@@ -1,12 +1,4 @@
-# Cloudflare Provider 설정
-terraform {
-  required_providers {
-    cloudflare = {
-      source  = "cloudflare/cloudflare"
-      version = "~> 4.0"
-    }
-  }
-}
+# Cloudflare Provider 설정은 main.tf의 terraform 블록으로 통합되었습니다.
 
 provider "cloudflare" {
   api_token = var.cloudflare_api_token
@@ -14,7 +6,7 @@ provider "cloudflare" {
 
 # Cloudflare Zone 설정 (도메인)
 resource "cloudflare_zone" "y2ks_site" {
-  account_id = "your_account_id_here" # 팀장님의 Cloudflare 계정 ID로 교체 필요
+  account_id = "62637244e9a2598595e128e76c508772"
   zone       = var.domain_name
 }
 

@@ -41,12 +41,6 @@ variable "admin_token" {
   sensitive   = true
 }
 
-variable "domain_name" {
-  description = "Cloudflare에 등록된 도메인 이름"
-  type        = string
-  default     = "y2ks.site"
-}
-
 variable "cloudflare_api_token" {
   description = "Cloudflare API 토큰"
   type        = string
