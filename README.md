@@ -323,32 +323,45 @@ terraform destroy
 ## 멀티 에이전트
 
 AWS Strands Agents SDK + Amazon Bedrock 기반의 EKS 운영 자동화 에이전트입니다.  
-관리자 페이지(`/admin`)에서 질문을 입력하면 에이전트가 자동으로 전문가를 선택해 분석합니다.
+관리자 페이지(`/admin`)에서 질문을 입력하면 에이전트가 자동으로 전문가를 선택해 분석합니다.  
+EKS 클러스터 내 파드(`y2ks-agent`)로 상시 실행되며, frontend가 `/api/agent/*`로 프록시하여 연결합니다.
 
 ### 구성
 
 ```
 사용자 질문 (관리자 페이지 / Slack)
         ↓
-   [Router] - Claude Sonnet 4.6
+   [Router] - Claude Sonnet 4
         ↓
 단일 전문가              복수 전문가
     ↓                       ↓
 직접 처리             전문가끼리 핸드오프
                     EKS ↔ DB ↔ Observe
                           ↓
-               [Orchestrator] - Claude Sonnet 4.6
+               [Orchestrator] - Claude Sonnet 4
 ```
 
 | 에이전트 | 모델 | 담당 |
 |---------|------|------|
-| Router | Claude Sonnet 4.6 | 질문 분석 → 전문가 선택 |
-| EKS Agent | Claude Haiku 3 | kubectl / KEDA / Karpenter / SQS |
-| DB Agent | Claude Haiku 3 | DynamoDB / 봇 탐지 / 참여 분석 |
-| Observe Agent | Claude Haiku 3 | 리소스 / 비용 / 성능 |
-| Orchestrator | Claude Sonnet 4.6 | 교차 분석 + 최종 판단 |
+| Router | Claude Sonnet 4 (`apac.anthropic.claude-sonnet-4-20250514-v1:0`) | 질문 분석 → 전문가 선택 |
+| EKS Agent | Claude Sonnet 4 | kubectl / KEDA / Karpenter / SQS |
+| DB Agent | Claude Sonnet 4 | DynamoDB / 봇 탐지 / 참여 분석 |
+| Observe Agent | Claude Sonnet 4 | 리소스 / 비용 / 성능 |
+| Orchestrator | Claude Sonnet 4 | 교차 분석 + 최종 판단 |
 
-### 설치
+### 배포 구조
+
+`terraform apply` 시 자동으로 EKS 클러스터 내 파드로 배포됩니다.
+
+```
+y2ks-agent 파드 (Karpenter 노드, Flask HTTP 서버 8080)
+    ↑ /api/agent/query
+y2ks-frontend 파드 (프록시)
+    ↑ /admin 페이지
+사용자 브라우저
+```
+
+### 로컬 실행 (개발용)
 
 > ⚠️ Python 3.14는 anyio 4.x와 충돌합니다. **Python 3.12** 사용하세요.
 
@@ -358,12 +371,11 @@ winget install Python.Python.3.12
 cd agents
 py -3.12 -m venv venv312
 venv312\Scripts\activate
-pip install strands-agents boto3 python-dotenv slack_bolt
+pip install strands-agents boto3 python-dotenv slack_bolt flask
 ```
 
 AWS 콘솔 → Bedrock → Model access에서 아래 모델 활성화 필요:
 - `Claude Sonnet 4` (APAC 리전)
-- `Claude Haiku 3` (APAC 리전)
 
 ### 환경변수
 
@@ -383,6 +395,9 @@ SLACK_APP_TOKEN=xapp-...
 cd agents
 venv312\Scripts\activate
 
+# HTTP 서버 모드 (K8s 파드 실행 방식 — 로컬 테스트용)
+python eks_agent.py --serve
+
 # Slack 봇
 python slack_bot.py
 
@@ -395,11 +410,11 @@ python eks_agent.py --auto           # 전체 자동 진단
 
 ```
 agents/
-├── eks_agent.py        # 에이전트 + 라우터 + 오케스트레이터
+├── eks_agent.py        # 에이전트 + 라우터 + 오케스트레이터 + HTTP 서버
 ├── eks_mcp_server.py   # MCP 툴 서버 (kubectl + boto3 + Prometheus)
 ├── slack_bot.py        # Slack 봇
 ├── main.py             # 순차 실행 버전
 ├── requirements.txt    # Python 패키지 목록
-└── .env                # 환경변수
+└── .env                # 환경변수 (gitignore 처리됨)
 ```
 
