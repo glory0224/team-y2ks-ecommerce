@@ -51,7 +51,7 @@ spec:
       - name: web
         image: "{{ .Values.images.frontend }}"
         command: ["gunicorn"]
-        args: ["--bind", "0.0.0.0:5000", "--workers", "8", "--chdir", "/app", "app:app"]
+        args: ["--bind", "0.0.0.0:5000", "--workers", "8", "--timeout", "180", "--chdir", "/app", "app:app"]
         ports:
         - containerPort: 5000
         readinessProbe:
