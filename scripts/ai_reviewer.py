@@ -1,3 +1,4 @@
+# AI PR Reviewer - Bedrock Claude
 import os
 import json
 import boto3
