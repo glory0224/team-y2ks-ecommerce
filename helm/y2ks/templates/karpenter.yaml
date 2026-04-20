@@ -40,7 +40,7 @@ spec:
           values: ["2", "4", "8"]
         - key: karpenter.k8s.aws/instance-family
           operator: In
-          values: ["t3", "t3a", "c5", "c5a", "m5", "m5a"]
+          values: ["c5", "c5a", "m5", "m5a"]
       taints:
         - key: karpenter
           value: "true"
@@ -55,4 +55,4 @@ spec:
     memory: 240Gi
   disruption:
     consolidationPolicy: WhenEmptyOrUnderutilized
-    consolidateAfter: 10m
+    consolidateAfter: 2m
