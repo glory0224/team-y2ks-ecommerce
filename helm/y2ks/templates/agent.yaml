@@ -103,26 +103,6 @@ spec:
                 secretKeyRef:
                   name: y2ks-secrets
                   key: SQS_QUEUE_URL
-            - name: SLACK_BOT_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: y2ks-agent-secrets
-                  key: SLACK_BOT_TOKEN
-            - name: SLACK_APP_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: y2ks-agent-secrets
-                  key: SLACK_APP_TOKEN
-            - name: SLACK_SIGNING_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: y2ks-agent-secrets
-                  key: SLACK_SIGNING_SECRET
-            - name: SLACK_CHANNEL_ID
-              valueFrom:
-                secretKeyRef:
-                  name: y2ks-agent-secrets
-                  key: SLACK_CHANNEL_ID
           ports:
             - containerPort: 8080
           livenessProbe:
