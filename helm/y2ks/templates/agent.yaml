@@ -102,11 +102,6 @@ spec:
                 secretKeyRef:
                   name: y2ks-secrets
                   key: SQS_QUEUE_URL
-            - name: GITHUB_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: y2ks-secrets
-                  key: GITHUB_TOKEN
             - name: GITHUB_REPO
               valueFrom:
                 secretKeyRef:

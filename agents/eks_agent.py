@@ -45,6 +45,18 @@ SLACK_WEBHOOK  = os.environ.get("SLACK_WEBHOOK_URL", "")
 MAX_OUT        = 8000
 _PENDING_EDITS: dict = {}  # repo_filepath → {content, sha}
 
+def _get_github_creds() -> tuple[str, str]:
+    """GitHub 토큰을 AWS Secrets Manager에서 가져옵니다. env var를 fallback으로 사용."""
+    token = os.environ.get("GITHUB_TOKEN", "")
+    repo  = os.environ.get("GITHUB_REPO", "")
+    if not token:
+        try:
+            sm = boto3.client("secretsmanager", region_name=os.environ.get("AWS_REGION", "ap-northeast-2"))
+            token = sm.get_secret_value(SecretId="y2ks/github-token")["SecretString"]
+        except Exception:
+            pass
+    return token, repo
+
 # ── 모델 ─────────────────────────────────────────────────────
 ORCHESTRATOR_MODEL = BedrockModel(
     model_id="apac.anthropic.claude-3-haiku-20240307-v1:0",
@@ -259,10 +271,9 @@ def edit_infrastructure_code(repo_filepath: str, search_text: str, replace_text:
         search_text:   교체할 기존 텍스트
         replace_text:  교체할 새 텍스트
     """
-    GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
-    GITHUB_REPO  = os.environ.get("GITHUB_REPO", "")
+    GITHUB_TOKEN, GITHUB_REPO = _get_github_creds()
     if not GITHUB_TOKEN or not GITHUB_REPO:
-        return "GITHUB_TOKEN 또는 GITHUB_REPO 환경변수가 없습니다."
+        return "GitHub 토큰 또는 GITHUB_REPO를 가져올 수 없습니다."
     try:
         api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{repo_filepath}"
         req = urllib.request.Request(
@@ -311,12 +322,11 @@ def create_gitops_pr(branch_name: str, commit_message: str, pr_title: str = "", 
     """
     import base64 as _b64
 
-    GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
-    GITHUB_REPO  = os.environ.get("GITHUB_REPO", "")
+    GITHUB_TOKEN, GITHUB_REPO = _get_github_creds()
     BASE_BRANCH  = "main"
 
     if not GITHUB_TOKEN:
-        return "GITHUB_TOKEN 환경변수가 없습니다."
+        return "GitHub 토큰을 가져올 수 없습니다."
     if not GITHUB_REPO:
         return "GITHUB_REPO 환경변수가 없습니다."
     if not _PENDING_EDITS:
