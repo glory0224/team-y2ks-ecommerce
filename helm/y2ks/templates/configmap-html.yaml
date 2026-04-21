@@ -217,8 +217,26 @@ data:
     .lc-tool{background:rgba(167,139,250,.1);color:var(--purple);border:1px solid rgba(167,139,250,.2)}
     .lc-final{background:rgba(34,197,94,.1);color:var(--green);border:1px solid rgba(34,197,94,.2)}
     .lc-time{font-size:11px;color:#444}
-    .log-card-body{font-size:13px;color:#ccc;line-height:1.6;white-space:pre-wrap;word-break:break-word}
-    .msg-final{background:#111;border:1px solid rgba(200,169,110,.2);border-radius:8px;padding:16px;font-size:14px;color:#e8e8e8;line-height:1.7;white-space:pre-wrap;word-break:break-word}
+    .log-card-body{font-size:13px;color:#ccc;line-height:1.6;word-break:break-word}
+    .log-card-body h2,.log-card-body h3{color:var(--accent);margin:10px 0 4px;font-size:13px}
+    .log-card-body strong{color:#fff}
+    .log-card-body ul,.log-card-body ol{padding-left:18px;margin:4px 0}
+    .log-card-body li{margin:2px 0}
+    .log-card-body hr{border:none;border-top:1px solid #2a2a2a;margin:8px 0}
+    .log-card-body pre{background:#0a0a0a;padding:8px;border-radius:4px;overflow-x:auto;font-size:12px}
+    .msg-final{background:#111;border:1px solid rgba(200,169,110,.2);border-radius:8px;padding:20px;font-size:14px;color:#e8e8e8;line-height:1.8;word-break:break-word}
+    .msg-final h2{color:var(--accent);font-size:15px;margin:14px 0 6px;padding-bottom:4px;border-bottom:1px solid rgba(200,169,110,.2)}
+    .msg-final h3{color:#ccc;font-size:13px;margin:10px 0 4px}
+    .msg-final strong{color:#fff;font-weight:700}
+    .msg-final ul,.msg-final ol{padding-left:20px;margin:6px 0}
+    .msg-final li{margin:4px 0;color:#ddd}
+    .msg-final hr{border:none;border-top:1px solid #2a2a2a;margin:12px 0}
+    .msg-final pre{background:#0a0a0a;padding:10px;border-radius:6px;overflow-x:auto;font-size:12px;color:#a8ff78}
+    .report-badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700;margin-left:6px}
+    .badge-info{background:rgba(59,130,246,.2);color:#60a5fa}
+    .badge-warn{background:rgba(217,119,6,.2);color:#f59e0b}
+    .badge-crit{background:rgba(239,68,68,.2);color:#f87171}
+    .badge-ok{background:rgba(34,197,94,.2);color:#4ade80}
     .thinking-dots{display:flex;gap:6px;padding:12px 0}
     .thinking-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);opacity:.3;animation:pulse 1.2s infinite}
     .thinking-dot:nth-child(2){animation-delay:.2s}
@@ -493,19 +511,23 @@ data:
     function addProcessingToggle(body) {
       var tog = document.createElement('div');
       tog.className = 'processing-toggle';
-      tog.innerHTML = '<span class="chevron open">&#9660;</span><span>전문가 분석 과정</span>';
+      tog.innerHTML = '<span class="chevron closed">&#9654;</span><span>전문가 분석 과정 보기</span>';
       var log = document.createElement('div');
       log.className = 'processing-log';
+      log.style.display = 'none';
       tog.onclick = function() {
         var c = tog.querySelector('.chevron');
+        var label = tog.querySelector('span:last-child');
         if (log.style.display === 'none') {
           log.style.display = '';
           c.className = 'chevron open';
           c.innerHTML = '&#9660;';
+          label.textContent = '전문가 분석 과정 숨기기';
         } else {
           log.style.display = 'none';
           c.className = 'chevron closed';
           c.innerHTML = '&#9654;';
+          label.textContent = '전문가 분석 과정 보기';
         }
       };
       body.appendChild(tog);
@@ -516,16 +538,64 @@ data:
     function addLogCard(container, type, tag, content) {
       var card = document.createElement('div');
       card.className = 'log-card';
-      var escaped = content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      card.innerHTML = '<div class="log-card-header"><div class="log-card-meta"><span class="lc-type">agent</span><span class="lc-tag lc-' + type + '">' + tag + '</span></div><span class="lc-time">' + nowTime() + '</span></div><div class="log-card-body">' + escaped + '</div>';
+      card.innerHTML = '<div class="log-card-header"><div class="log-card-meta"><span class="lc-type">agent</span><span class="lc-tag lc-' + type + '">' + tag + '</span></div><span class="lc-time">' + nowTime() + '</span></div><div class="log-card-body">' + mdToHtml(content) + '</div>';
       container.appendChild(card);
       scrollBottom();
+    }
+
+    function mdToHtml(text) {
+      // <result> 태그 제거
+      text = text.replace(/<\/?result>/g, '');
+      // 코드블록
+      text = text.replace(/```[\s\S]*?```/g, function(m) {
+        var code = m.replace(/^```[^\n]*\n?/, '').replace(/```$/, '');
+        return '<pre><code>' + code.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</code></pre>';
+      });
+      // h3 h2 h1
+      text = text.replace(/^### (.+)$/mg, '<h3>$1</h3>');
+      text = text.replace(/^## (.+)$/mg, '<h2>$1</h2>');
+      text = text.replace(/^# (.+)$/mg, '<h1>$1</h1>');
+      // bold, italic
+      text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
+      // 수평선
+      text = text.replace(/^---+$/mg, '<hr>');
+      // 리스트
+      text = text.replace(/^(\s*[-•] .+)(\n\s*[-•] .+)*/mg, function(m) {
+        var items = m.split('\n').filter(Boolean).map(function(l) {
+          return '<li>' + l.replace(/^\s*[-•] /, '') + '</li>';
+        });
+        return '<ul>' + items.join('') + '</ul>';
+      });
+      // 번호 리스트
+      text = text.replace(/^(\s*\d+\. .+)(\n\s*\d+\. .+)*/mg, function(m) {
+        var items = m.split('\n').filter(Boolean).map(function(l) {
+          return '<li>' + l.replace(/^\s*\d+\. /, '') + '</li>';
+        });
+        return '<ol>' + items.join('') + '</ol>';
+      });
+      // 심각도 뱃지
+      text = text.replace(/(심각도|Severity)[:\s]*(Critical|High|Medium|Low|Info|치명|높음|보통|낮음|정보)/gi, function(m, label, val) {
+        var cls = {critical:'crit',high:'crit',치명:'crit',높음:'warn',medium:'warn',보통:'warn',low:'info',낮음:'info',info:'ok',정보:'ok'}[val.toLowerCase()] || 'info';
+        return label + ': <span class="report-badge badge-' + cls + '">' + val + '</span>';
+      });
+      // 신뢰도 뱃지
+      text = text.replace(/(신뢰도|Confidence)[:\s]*(High|Medium|Low|높음|보통|낮음)/gi, function(m, label, val) {
+        var cls = {high:'ok',높음:'ok',medium:'warn',보통:'warn',low:'crit',낮음:'crit'}[val.toLowerCase()] || 'info';
+        return label + ': <span class="report-badge badge-' + cls + '">' + val + '</span>';
+      });
+      // 빈줄을 단락으로
+      text = text.replace(/(<\/ul>|<\/ol>|<\/h[123]>|<hr>)\n/g, '$1');
+      text = text.replace(/\n{2,}/g, '</p><p>');
+      text = text.replace(/\n/g, '<br>');
+      if (!text.startsWith('<')) text = '<p>' + text + '</p>';
+      return text.trim();
     }
 
     function addFinalMsg(body, content) {
       var el = document.createElement('div');
       el.className = 'msg-final';
-      el.textContent = content;
+      el.innerHTML = mdToHtml(content);
       body.appendChild(el);
       scrollBottom();
     }
