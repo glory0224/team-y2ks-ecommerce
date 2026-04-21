@@ -41,8 +41,9 @@ from strands.multiagent.swarm import Swarm
 AWS_REGION    = os.environ.get("AWS_REGION", "ap-northeast-2")
 DDB_TABLE     = os.environ.get("DDB_TABLE", "y2ks-coupon-claims")
 SQS_QUEUE_URL = os.environ.get("SQS_QUEUE_URL", "")
-SLACK_WEBHOOK = os.environ.get("SLACK_WEBHOOK_URL", "")
-MAX_OUT       = 8000
+SLACK_WEBHOOK  = os.environ.get("SLACK_WEBHOOK_URL", "")
+MAX_OUT        = 8000
+_PENDING_EDITS: dict = {}  # repo_filepath → {content, sha}
 
 # ── 모델 ─────────────────────────────────────────────────────
 ORCHESTRATOR_MODEL = BedrockModel(
@@ -249,39 +250,144 @@ def send_slack_message(message: str, level: str = "info") -> str:
         return f"Slack 전송 실패: {e}"
 
 @tool
-def edit_infrastructure_code(filepath: str, search_text: str, replace_text: str) -> str:
-    """인프라 코드(YAML, TF 등)를 직접 수정합니다. (GitOps Auto-Remediation)"""
+def edit_infrastructure_code(repo_filepath: str, search_text: str, replace_text: str) -> str:
+    """GitHub API로 레포지토리 파일 내용을 조회하고 수정 내용을 메모리에 저장합니다.
+    실제 반영은 create_gitops_pr 호출 시 이루어집니다.
+
+    Args:
+        repo_filepath: 레포 기준 파일 경로 (예: helm/y2ks/templates/agent.yaml)
+        search_text:   교체할 기존 텍스트
+        replace_text:  교체할 새 텍스트
+    """
+    GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+    GITHUB_REPO  = os.environ.get("GITHUB_REPO", "")
+    if not GITHUB_TOKEN or not GITHUB_REPO:
+        return "GITHUB_TOKEN 또는 GITHUB_REPO 환경변수가 없습니다."
     try:
-        if not os.path.exists(filepath):
-            return f"파일을 찾을 수 없습니다: {filepath}"
-        with open(filepath, "r", encoding="utf-8") as f:
-            content = f.read()
+        api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{repo_filepath}"
+        req = urllib.request.Request(
+            api_url,
+            headers={
+                "Authorization": f"Bearer {GITHUB_TOKEN}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            }
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+
+        import base64 as _b64
+        content = _b64.b64decode(data["content"]).decode("utf-8")
+        sha     = data["sha"]
+
         if search_text not in content:
-            return "search_text가 파일 내에 존재하지 않습니다. 정확한 텍스트를 입력하세요."
-        
-        new_content = content.replace(search_text, replace_text)
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(new_content)
-        return f"파일 수정 완료: {filepath}\n변경점: {search_text} -> {replace_text}"
+            return f"search_text가 파일에 없습니다: {repo_filepath}\n정확한 텍스트를 입력하세요."
+
+        new_content = content.replace(search_text, replace_text, 1)
+
+        # 수정 내용을 전역 임시 저장소에 보관 (create_gitops_pr에서 사용)
+        _PENDING_EDITS[repo_filepath] = {"content": new_content, "sha": sha}
+
+        return (
+            f"파일 수정 준비 완료: {repo_filepath}\n"
+            f"변경: {repr(search_text)} → {repr(replace_text)}\n"
+            f"create_gitops_pr을 호출하면 새 브랜치에 커밋 후 PR이 생성됩니다."
+        )
     except Exception as e:
-        return f"파일 수정 실패: {e}"
+        return f"파일 조회/수정 실패: {e}"
 
 @tool
-def create_gitops_pr(branch_name: str, commit_message: str, filepath: str = ".") -> str:
-    """수정된 코드를 새로운 브랜치에 커밋하고 푸시하여 PR(CI/CD)을 유도합니다."""
+def create_gitops_pr(branch_name: str, commit_message: str, pr_title: str = "", pr_body: str = "") -> str:
+    """수정된 파일을 새 브랜치에 커밋/푸시하고 GitHub PR을 자동 생성합니다.
+
+    """edit_infrastructure_code로 수정한 파일을 새 브랜치에 커밋하고 GitHub PR을 생성합니다.
+    git 설치나 repo clone 없이 GitHub API만으로 동작합니다.
+
+    Args:
+        branch_name:    생성할 브랜치명 (예: fix/agent-20250421)
+        commit_message: 커밋 메시지
+        pr_title:       PR 제목 (생략 시 commit_message 사용)
+        pr_body:        PR 본문 (생략 시 자동 생성)
+    """
+    import base64 as _b64
+
+    GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+    GITHUB_REPO  = os.environ.get("GITHUB_REPO", "")
+    BASE_BRANCH  = "main"
+
+    if not GITHUB_TOKEN:
+        return "GITHUB_TOKEN 환경변수가 없습니다."
+    if not GITHUB_REPO:
+        return "GITHUB_REPO 환경변수가 없습니다."
+    if not _PENDING_EDITS:
+        return "수정된 파일이 없습니다. edit_infrastructure_code를 먼저 호출하세요."
+
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "Content-Type": "application/json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+    def _api(method: str, path: str, body: dict = None):
+        url  = f"https://api.github.com/repos/{GITHUB_REPO}/{path}"
+        data = json.dumps(body).encode() if body else None
+        req  = urllib.request.Request(url, data=data, headers=headers, method=method)
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read())
+
     try:
-        # 가상환경(venv) 등 불필요한 파일이 포함되지 않도록 특정 파일만 add 합니다.
-        subprocess.run(["git", "checkout", "-b", branch_name], check=True, capture_output=True)
-        subprocess.run(["git", "add", filepath], check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", commit_message], check=True, capture_output=True)
-        subprocess.run(["git", "push", "-u", "origin", branch_name], check=True, capture_output=True)
-        
-        subprocess.run(["git", "checkout", "-"], check=True, capture_output=True)
-        
-        return f"GitOps 브랜치 푸시 완료! 브랜치명: {branch_name}\n커밋: {commit_message}\n이제 CI/CD 파이프라인이 코드를 검증하고 팀원의 승인을 대기합니다."
-    except subprocess.CalledProcessError as e:
-        subprocess.run(["git", "checkout", "-"], capture_output=True)
-        return f"GitOps 푸시 실패: {e.stderr.decode('utf-8', errors='ignore') if e.stderr else e}"
+        # main 브랜치 최신 SHA 조회
+        ref_data  = _api("GET", f"git/ref/heads/{BASE_BRANCH}")
+        base_sha  = ref_data["object"]["sha"]
+
+        # 새 브랜치 생성 (이미 있으면 force update)
+        try:
+            _api("POST", "git/refs", {"ref": f"refs/heads/{branch_name}", "sha": base_sha})
+        except Exception:
+            _api("PATCH", f"git/refs/heads/{branch_name}", {"sha": base_sha, "force": True})
+
+        # 수정된 파일들 각각 커밋
+        committed = []
+        for repo_filepath, edit in _PENDING_EDITS.items():
+            encoded = _b64.b64encode(edit["content"].encode("utf-8")).decode()
+            _api("PUT", f"contents/{repo_filepath}", {
+                "message": f"[Agent] {commit_message}",
+                "content": encoded,
+                "sha":     edit["sha"],
+                "branch":  branch_name,
+            })
+            committed.append(repo_filepath)
+
+        _PENDING_EDITS.clear()
+
+        # PR 생성
+        title = pr_title or commit_message
+        body  = pr_body or (
+            f"## AI 에이전트 자동 수정 PR\n\n"
+            f"**수정 파일**:\n" +
+            "\n".join(f"- `{f}`" for f in committed) +
+            f"\n\n**변경 내용**: {commit_message}\n\n"
+            f"**생성 시각**: {datetime.now(timezone.utc).isoformat()}\n\n"
+            f"---\n> Y2KS AIOps 에이전트가 클러스터 이상을 감지하고 자동 생성한 PR입니다.\n"
+            f"> 검토 후 머지해주세요."
+        )
+        pr = _api("POST", "pulls", {
+            "title": f"[Agent] {title}",
+            "body":  body,
+            "head":  branch_name,
+            "base":  BASE_BRANCH,
+        })
+
+        return (
+            f"PR 생성 완료!\n"
+            f"  브랜치: {branch_name}\n"
+            f"  PR #{pr['number']}: {pr['html_url']}\n"
+            f"  수정 파일: {', '.join(committed)}\n"
+            f"  AI 리뷰어가 자동으로 코드를 검토합니다. 검토 후 머지해주세요."
+        )
+    except Exception as e:
+        return f"PR 생성 실패: {e}"
 
 
 # ── DB 툴 ────────────────────────────────────────────────────
@@ -461,7 +567,7 @@ EKS_SWARM_PROMPT = """당신은 EKS Agent — Y2KS 클러스터 운영 전문가
 - 파드 이상/리소스 부족 원인 파악 시 → edit_infrastructure_code로 인프라 파일 수치를 직접 수정 (Auto-Remediation)
   * 중요: Karpenter 설정은 주로 `helm/y2ks/templates/karpenter.yaml`에 위치함
   * 다른 설정들도 `helm/y2ks/templates/` 폴더 내에 있으니 이 경로를 우선적으로 확인할 것
-- 코드 수정 후 → create_gitops_pr로 브랜치 커밋/푸시하여 CI/CD 유도 (이때 반드시 수정한 파일의 경로를 filepath 인자로 전달할 것)
+- 코드 수정 후 → create_gitops_pr로 새 브랜치에 커밋 + GitHub PR 자동 생성 (branch_name, commit_message만 전달하면 됨)
 - 전체 진단 → get_all_pods → get_node_resources 순서
 - 2~3개 툴만 선택, 불필요한 중복 호출 금지
 
