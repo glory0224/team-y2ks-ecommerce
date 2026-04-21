@@ -51,7 +51,7 @@ spec:
       - name: web
         image: "{{ .Values.images.frontend }}"
         command: ["gunicorn"]
-        args: ["--bind", "0.0.0.0:5000", "--workers", "4", "--timeout", "180", "--chdir", "/app", "app:app"]
+        args: ["--bind", "0.0.0.0:5000", "--workers", "4", "--worker-class", "gthread", "--threads", "3", "--timeout", "180", "--chdir", "/app", "app:app"]
         ports:
         - containerPort: 5000
         readinessProbe:
@@ -145,10 +145,10 @@ spec:
         periodSeconds: 15
       selectPolicy: Max
     scaleDown:
-      stabilizationWindowSeconds: 60
+      stabilizationWindowSeconds: 300
       policies:
       - type: Percent
-        value: 50
+        value: 25
         periodSeconds: 60
 ---
 apiVersion: v1

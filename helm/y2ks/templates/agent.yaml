@@ -102,11 +102,13 @@ spec:
                 secretKeyRef:
                   name: y2ks-secrets
                   key: SQS_QUEUE_URL
-            - name: GITHUB_REPO
+            - name: GRAFANA_URL
+              value: "http://prometheus-grafana.monitoring.svc.cluster.local:80"
+            - name: GRAFANA_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: y2ks-secrets
-                  key: GITHUB_REPO
+                  key: GRAFANA_PASSWORD
           ports:
             - containerPort: 8080
           livenessProbe:
