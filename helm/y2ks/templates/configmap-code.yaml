@@ -166,7 +166,7 @@ data:
             # 프론트엔드가 DynamoDB에 직접 password_hash 저장 (워커 경유 없이)
             ddb_res.Table(DDB_TABLE).put_item(Item={
                 'request_id': nickname,
-                'password_hash': password_hash,
+                'password_hash': hash_password(password),
                 'status': 'pending',
                 'claimed_at': datetime.now(timezone.utc).isoformat()
             })

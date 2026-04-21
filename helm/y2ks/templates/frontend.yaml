@@ -26,16 +26,11 @@ spec:
     spec:
       serviceAccountName: worker-sa
       priorityClassName: y2ks-high
-      tolerations:
-      - key: karpenter
-        value: "true"
-        effect: NoSchedule
       affinity:
         nodeAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-          - weight: 100
-            preference:
-              matchExpressions:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
               - key: node-type
                 operator: In
                 values: ["ondemand-1", "ondemand-2"]
