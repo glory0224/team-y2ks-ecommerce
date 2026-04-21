@@ -64,7 +64,6 @@ spec:
         app: agent
     spec:
       serviceAccountName: agent-sa
-      priorityClassName: y2ks-low
       tolerations:
         - key: karpenter
           value: "true"
