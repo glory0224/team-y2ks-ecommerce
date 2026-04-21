@@ -161,18 +161,15 @@ data:
         added = r.sadd('participants', nickname)
         if added == 0:
             return jsonify({'error': 'duplicate', 'message': '이미 참여하셨습니다.'}), 409
-        password_hash = hash_password(password)
         r.setex(f'result:{nickname}', 600, 'pending')
-        r.setex(f'phash:{nickname}', 600, password_hash)
         try:
             sqs_client.send_message(
                 QueueUrl=QUEUE_URL,
-                MessageBody=json.dumps({'request_id': nickname, 'password_hash': password_hash, 'type': 'claim'})
+                MessageBody=json.dumps({'request_id': nickname, 'password': password, 'type': 'claim'})
             )
         except Exception as e:
             r.srem('participants', nickname)
             r.delete(f'result:{nickname}')
-            r.delete(f'phash:{nickname}')
             return jsonify({'error': 'queue_unavailable', 'message': str(e)}), 503
         return jsonify({'request_id': nickname, 'status': 'queued'})
 
@@ -343,7 +340,7 @@ data:
         app.run(host='0.0.0.0', port=5000, debug=False)
 
   worker.py: |
-    import boto3, redis, json, time, os, random, string
+    import boto3, redis, json, time, os, random, string, bcrypt
     from datetime import datetime, timezone
 
     REDIS_HOST = os.environ.get('REDIS_HOST', 'redis-service')
@@ -356,6 +353,9 @@ data:
     sqs = boto3.client('sqs', region_name=AWS_REGION)
     ddb = boto3.resource('dynamodb', region_name=AWS_REGION)
     table = ddb.Table(DDB_TABLE)
+
+    def hash_password(password):
+        return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=4)).decode()
 
     def gen_coupon():
         chars = string.ascii_uppercase + string.digits
@@ -408,7 +408,7 @@ data:
             open('/tmp/worker_alive', 'w').close()
             response = sqs.receive_message(
                 QueueUrl=QUEUE_URL,
-                MaxNumberOfMessages=1,
+                MaxNumberOfMessages=10,
                 WaitTimeSeconds=5
             )
             if 'Messages' in response:
@@ -417,7 +417,7 @@ data:
                     try:
                         body = json.loads(msg['Body'])
                         nickname = body.get('request_id')
-                        password_hash = body.get('password_hash', '')
+                        password_hash = hash_password(body.get('password', ''))
                         print(f'Processing claim: {nickname}', flush=True)
                         if r.get('tickets') is None:
                             remaining = restore_tickets_from_ddb()

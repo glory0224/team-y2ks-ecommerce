@@ -460,6 +460,7 @@ resource "null_resource" "install_y2ks" {
     cluster_name        = var.cluster_name
     karpenter_node_role = aws_iam_role.karpenter_node.name
     admin_token_hash    = sha256(var.admin_token)
+    grafana_pw_hash     = sha256(var.grafana_admin_password)
     # 템플릿 파일 변경 감지 → terraform apply 시 자동 재배포
     config_hash = sha256(join("", [
       file("${path.module}/../helm/y2ks/templates/aws-config.yaml"),
@@ -483,9 +484,15 @@ resource "null_resource" "install_y2ks" {
       Write-Host "=== [pre] Karpenter/LB 사전 정리 (apply-replace/destroy 공통) ==="
       # worker 스케일다운 → Karpenter가 새 노드 프로비저닝하는 것 방지
       kubectl scale deployment y2ks-worker --replicas=0 -n default 2>$null
+      # Karpenter NodeClaim finalizer 제거 → finalizer가 걸린 채로 delete하면 무한 hang
+      $nodeclaims = kubectl get nodeclaims --no-headers -o name 2>$null
+      foreach ($nc in ($nodeclaims -split "`n" | Where-Object { $_ })) {
+        $ncName = $nc -replace "nodeclaim.karpenter.sh/", ""
+        kubectl patch nodeclaim $ncName --type=merge -p '{"metadata":{"finalizers":[]}}' 2>$null
+      }
       # Karpenter NodeClaim/NodePool 삭제 → Karpenter 관리 노드 제거 트리거
-      kubectl delete nodeclaims --all 2>$null
-      kubectl delete nodepool --all 2>$null
+      kubectl delete nodeclaims --all --timeout=30s 2>$null
+      kubectl delete nodepool --all --timeout=30s 2>$null
       # LB 서비스 삭제 → AWS ELB 즉시 제거 (VPC 삭제 블로킹 방지)
       kubectl delete svc y2ks-frontend-svc -n default 2>$null
       kubectl delete svc prometheus-grafana -n monitoring 2>$null
@@ -690,7 +697,8 @@ resource "null_resource" "install_y2ks" {
         --set images.frontend=${aws_ecr_repository.frontend.repository_url}:latest `
         --set images.worker=${aws_ecr_repository.worker.repository_url}:latest `
         --set images.agent=${aws_ecr_repository.agent.repository_url}:latest `
-        --set adminToken="${var.admin_token}"
+        --set adminToken="${var.admin_token}" `
+        --set grafanaPassword="${var.grafana_admin_password}"
     EOT
   }
 
