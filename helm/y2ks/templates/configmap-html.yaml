@@ -133,14 +133,14 @@ data:
         <span class="sec-sub">이번 시즌 가장 사랑받는 아이템</span>
       </div>
       <div class="grid">
-        <div class="card"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/1%EB%B2%88.jpg" alt="체크 플란넬 셔츠"><span class="badge b-best">BEST</span></div><div class="card-brand">Y2KS BASIC</div><div class="card-name">체크 플란넬 셔츠</div><div class="card-price">89,000원</div></div>
-        <div class="card"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/caio-coelho-NA9dtyWAFV4-unsplash.jpg" alt="네이비 니트 스웨터"><span class="badge b-new">NEW</span></div><div class="card-brand">Y2KS KNIT</div><div class="card-name">네이비 니트 스웨터</div><div class="card-price">79,000원</div></div>
-        <div class="card"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/caio-coelho-QRN47la37gw-unsplash.jpg" alt="데님 트러커 재킷"><span class="badge b-best">BEST</span></div><div class="card-brand">Y2KS DENIM</div><div class="card-name">데님 트러커 재킷</div><div class="card-price">139,000원</div></div>
-        <div class="card"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/faith-yarn-Wr0TpKqf26s-unsplash.jpg" alt="레터링 블랙 티셔츠"></div><div class="card-brand">Y2KS BASIC</div><div class="card-name">레터링 블랙 티셔츠</div><div class="card-price">35,000원</div></div>
-        <div class="card"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/shelter-dg0uHhW0Fd4-unsplash.jpg" alt="크로셰 그래니 가디건"><span class="badge b-new">NEW</span></div><div class="card-brand">Y2KS KNIT</div><div class="card-name">크로셰 그래니 가디건</div><div class="card-price">125,000원</div></div>
-        <div class="card"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/tian-dayong-D1B0y5LPCvs-unsplash.jpg" alt="린넨 슬리브리스 베스트"></div><div class="card-brand">Y2KS LINEN</div><div class="card-name">린넨 슬리브리스 베스트</div><div class="card-price">59,000원</div></div>
-        <div class="card"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/tian-dayong-lziP7ZPtghg-unsplash.jpg" alt="린넨 반소매 블라우스"><span class="badge b-new">NEW</span></div><div class="card-brand">Y2KS LINEN</div><div class="card-name">린넨 반소매 블라우스</div><div class="card-price">55,000원</div></div>
-        <div class="card"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/tobias-tullius-Fg15LdqpWrs-unsplash.jpg" alt="테라코타 봄버 재킷"><span class="badge b-sale">SALE</span></div><div class="card-brand">Y2KS OUTER</div><div class="card-name">테라코타 봄버 재킷</div><div class="card-price">119,000원</div></div>
+        <div class="card"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/flannel-shirt.jpg" alt="체크 플란넬 셔츠"><span class="badge b-best">BEST</span></div><div class="card-brand">Y2KS BASIC</div><div class="card-name">체크 플란넬 셔츠</div><div class="card-price">89,000원</div></div>
+        <div class="card"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/knit-sweater.jpg" alt="네이비 니트 스웨터"><span class="badge b-new">NEW</span></div><div class="card-brand">Y2KS KNIT</div><div class="card-name">네이비 니트 스웨터</div><div class="card-price">79,000원</div></div>
+        <div class="card"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/denim-jacket.jpg" alt="데님 트러커 재킷"><span class="badge b-best">BEST</span></div><div class="card-brand">Y2KS DENIM</div><div class="card-name">데님 트러커 재킷</div><div class="card-price">139,000원</div></div>
+        <div class="card"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/black-tshirt.jpg" alt="레터링 블랙 티셔츠"></div><div class="card-brand">Y2KS BASIC</div><div class="card-name">레터링 블랙 티셔츠</div><div class="card-price">35,000원</div></div>
+        <div class="card"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/cardigan.jpg" alt="크로셰 그래니 가디건"><span class="badge b-new">NEW</span></div><div class="card-brand">Y2KS KNIT</div><div class="card-name">크로셰 그래니 가디건</div><div class="card-price">125,000원</div></div>
+        <div class="card"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/linen-vest.jpg" alt="린넨 슬리브리스 베스트"></div><div class="card-brand">Y2KS LINEN</div><div class="card-name">린넨 슬리브리스 베스트</div><div class="card-price">59,000원</div></div>
+        <div class="card"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/linen-blouse.jpg" alt="린넨 반소매 블라우스"><span class="badge b-new">NEW</span></div><div class="card-brand">Y2KS LINEN</div><div class="card-name">린넨 반소매 블라우스</div><div class="card-price">55,000원</div></div>
+        <div class="card"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/bomber-jacket.jpg" alt="테라코타 봄버 재킷"><span class="badge b-sale">SALE</span></div><div class="card-brand">Y2KS OUTER</div><div class="card-name">테라코타 봄버 재킷</div><div class="card-price">119,000원</div></div>
       </div>
     </main>
     <footer>
@@ -886,8 +886,7 @@ data:
         var data = await res.json();
         if (data.status === 'winner') {
           clearInterval(pollInterval);
-          var coupon = await getCouponFromDdb();
-          document.getElementById('coupon-display-winner').textContent = coupon;
+          document.getElementById('coupon-display-winner').textContent = data.coupon_code || '';
           setState('winner');
           launchConfetti();
           updateTicketCount();
@@ -897,18 +896,6 @@ data:
           updateTicketCount();
         }
       } catch(e) { console.error('poll error', e); }
-    }
-
-    async function getCouponFromDdb() {
-      var pw = document.getElementById('password-input').value.trim();
-      try {
-        var res = await fetch('/api/result', {
-          method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({nickname: currentNickname, password: pw})
-        });
-        var d = await res.json();
-        return d.coupon_code || '';
-      } catch(e) { return ''; }
     }
 
     async function checkResult() {

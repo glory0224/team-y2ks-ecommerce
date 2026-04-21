@@ -102,6 +102,11 @@ spec:
                 secretKeyRef:
                   name: y2ks-secrets
                   key: SQS_QUEUE_URL
+            - name: GITHUB_REPO
+              valueFrom:
+                secretKeyRef:
+                  name: y2ks-secrets
+                  key: GITHUB_REPO
           ports:
             - containerPort: 8080
           livenessProbe:

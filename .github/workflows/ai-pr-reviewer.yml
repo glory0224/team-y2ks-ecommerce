@@ -1,6 +1,8 @@
 name: AI PR Reviewer
 
 on:
+  pull_request:
+    types: [opened, synchronize]
   workflow_dispatch:
 
 jobs:

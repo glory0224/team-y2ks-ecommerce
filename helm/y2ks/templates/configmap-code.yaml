@@ -6,7 +6,9 @@ data:
   app.py: |
     from flask import Flask, jsonify, request, session, redirect
     from functools import wraps
-    import boto3, redis, json, os, random, string, re, base64, bcrypt, hashlib, urllib.request, urllib.error
+    import boto3, redis, json, os, random, string, re, base64, hashlib, urllib.request, urllib.error
+    from datetime import datetime, timezone
+    from datetime import datetime, timezone
     from prometheus_flask_exporter import PrometheusMetrics
 
     app = Flask(__name__)
@@ -28,17 +30,16 @@ data:
 
     r = redis.Redis(host=REDIS_HOST, port=6379, db=0, decode_responses=True)
     sqs_client = boto3.client('sqs', region_name=AWS_REGION)
+    ddb_res = boto3.resource('dynamodb', region_name=AWS_REGION)
 
     NICKNAME_RE = re.compile(r'^[a-zA-Z0-9가-힣_-]+$')
 
     def hash_password(password):
-        return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=4)).decode()
+        salt = ADMIN_TOKEN or 'y2ks-salt'
+        return hashlib.sha256(f'{salt}:{password}'.encode()).hexdigest()
 
     def verify_password(password, hashed):
-        try:
-            return bcrypt.checkpw(password.encode(), hashed.encode())
-        except Exception:
-            return False
+        return hash_password(password) == hashed
 
     def validate_claim(nickname, password):
         if not nickname or len(nickname) > 20:
@@ -157,28 +158,35 @@ data:
         err = validate_claim(nickname, password)
         if err:
             return jsonify({'error': 'invalid_input', 'message': err}), 400
-        # Redis SADD로 중복 참여 차단 (0이면 이미 존재)
         added = r.sadd('participants', nickname)
         if added == 0:
             return jsonify({'error': 'duplicate', 'message': '이미 참여하셨습니다.'}), 409
         password_hash = hash_password(password)
         r.setex(f'result:{nickname}', 600, 'pending')
-        r.setex(f'phash:{nickname}', 600, password_hash)
         try:
+            # 프론트엔드가 DynamoDB에 직접 password_hash 저장 (워커 경유 없이)
+            ddb_res.Table(DDB_TABLE).put_item(Item={
+                'request_id': nickname,
+                'password_hash': password_hash,
+                'status': 'pending',
+                'claimed_at': datetime.now(timezone.utc).isoformat()
+            })
             sqs_client.send_message(
                 QueueUrl=QUEUE_URL,
-                MessageBody=json.dumps({'request_id': nickname, 'password_hash': password_hash, 'type': 'claim'})
+                MessageBody=json.dumps({'request_id': nickname, 'type': 'claim'})
             )
         except Exception as e:
             r.srem('participants', nickname)
             r.delete(f'result:{nickname}')
-            r.delete(f'phash:{nickname}')
             return jsonify({'error': 'queue_unavailable', 'message': str(e)}), 503
         return jsonify({'request_id': nickname, 'status': 'queued'})
 
     @app.route('/api/check/<request_id>')
     def check_result(request_id):
         result = r.get(f'result:{request_id}')
+        if result == 'winner':
+            coupon = r.get(f'coupon:{request_id}') or ''
+            return jsonify({'status': 'winner', 'coupon_code': coupon})
         return jsonify({'status': result if result else 'pending'})
 
     @app.route('/api/result', methods=['POST'])
@@ -189,9 +197,7 @@ data:
         if not nickname or not password:
             return jsonify({'success': False, 'message': '닉네임과 비밀번호를 입력해주세요.'}), 400
         try:
-            ddb = boto3.resource('dynamodb', region_name=AWS_REGION)
-            table = ddb.Table(DDB_TABLE)
-            resp = table.get_item(Key={'request_id': nickname})
+            resp = ddb_res.Table(DDB_TABLE).get_item(Key={'request_id': nickname})
             item = resp.get('Item')
             if not item:
                 return jsonify({'success': False, 'message': '참여 기록이 없습니다.'})
@@ -363,18 +369,20 @@ data:
         p2 = ''.join(random.choices(chars, k=4))
         return f'Y2KS-{p1}-{p2}'
 
-    def save_to_ddb(nickname, password_hash, status, coupon_code=None):
-        item = {
-            'request_id': nickname,
-            'password_hash': password_hash,
-            'status': status,
-            'claimed_at': datetime.now(timezone.utc).isoformat(),
-        }
+    def update_ddb_status(nickname, status, coupon_code=None):
+        expr = 'SET #s = :status, claimed_at = :time'
+        vals = {':status': status, ':time': datetime.now(timezone.utc).isoformat()}
         if coupon_code:
-            item['coupon_code'] = coupon_code
+            expr += ', coupon_code = :coupon'
+            vals[':coupon'] = coupon_code
         try:
-            table.put_item(Item=item)
-            print(f'DynamoDB saved: {nickname} -> {status}', flush=True)
+            table.update_item(
+                Key={'request_id': nickname},
+                UpdateExpression=expr,
+                ExpressionAttributeNames={'#s': 'status'},
+                ExpressionAttributeValues=vals
+            )
+            print(f'DynamoDB updated: {nickname} -> {status}', flush=True)
         except Exception as e:
             print(f'DynamoDB error: {e}', flush=True)
 
@@ -417,7 +425,6 @@ data:
                     try:
                         body = json.loads(msg['Body'])
                         nickname = body.get('request_id')
-                        password_hash = body.get('password_hash', '')
                         print(f'Processing claim: {nickname}', flush=True)
                         if r.get('tickets') is None:
                             remaining = restore_tickets_from_ddb()
@@ -427,12 +434,12 @@ data:
                             coupon = gen_coupon()
                             r.setex(f'result:{nickname}', 600, 'winner')
                             r.setex(f'coupon:{nickname}', 600, coupon)
-                            save_to_ddb(nickname, password_hash, 'winner', coupon)
+                            update_ddb_status(nickname, 'winner', coupon)
                             print(f'Winner! nickname={nickname} coupon={coupon}, left={tickets}', flush=True)
                         else:
                             r.set('tickets', 0)
                             r.setex(f'result:{nickname}', 600, 'loser')
-                            save_to_ddb(nickname, password_hash, 'loser')
+                            update_ddb_status(nickname, 'loser')
                             print(f'Sold out. {nickname} missed.', flush=True)
                         sqs.delete_message(QueueUrl=QUEUE_URL, ReceiptHandle=receipt)
                     except Exception as e:
