@@ -379,6 +379,8 @@ resource "null_resource" "install_keda" {
         --set prometheus.operator.port=8080 `
         --set prometheus.metricServer.enabled=true `
         --set prometheus.metricServer.port=9022 `
+        --set "affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].key=karpenter.sh/nodepool" `
+        --set "affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].operator=DoesNotExist" `
         --wait --timeout 5m
     EOT
   }
