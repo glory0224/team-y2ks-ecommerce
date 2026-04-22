@@ -98,6 +98,86 @@ resource "null_resource" "kubeconfig" {
 }
 
 # ============================================================
+# PriorityClass 사전 생성
+# prometheus-values.yaml이 y2ks-critical/y2ks-high를 참조하므로
+# install_prometheus 전에 반드시 존재해야 함
+# ============================================================
+resource "null_resource" "create_priority_classes" {
+  triggers = {
+    cluster_name = aws_eks_cluster.main.name
+  }
+
+  provisioner "local-exec" {
+    interpreter = ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-Command"]
+    command     = <<-EOT
+      $ErrorActionPreference = "Stop"
+      aws eks update-kubeconfig --name ${var.cluster_name} --region ${var.aws_region}
+
+      $yaml = @'
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: y2ks-critical
+  labels:
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    meta.helm.sh/release-name: y2ks
+    meta.helm.sh/release-namespace: default
+value: 100000
+globalDefault: false
+description: "Redis 등 전체 시스템의 기반이 되는 핵심 서비스 - 절대 선점 불가"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: y2ks-high
+  labels:
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    meta.helm.sh/release-name: y2ks
+    meta.helm.sh/release-namespace: default
+value: 10000
+globalDefault: false
+description: "사용자 접속 프론트엔드 - 트래픽 스파이크 시에도 항상 보장"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: y2ks-normal
+  labels:
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    meta.helm.sh/release-name: y2ks
+    meta.helm.sh/release-namespace: default
+value: 1000
+globalDefault: true
+description: "KEDA Worker - 이벤트 처리용, 리소스 부족 시 선점 허용"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: y2ks-low
+  labels:
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    meta.helm.sh/release-name: y2ks
+    meta.helm.sh/release-namespace: default
+value: 100
+globalDefault: false
+description: "Cart/Payment/Product - Worker 선점 대상, 스팟 한계 시 ondemand 자리 양보"
+'@
+      $f = [System.IO.Path]::GetTempFileName() + ".yaml"
+      [System.IO.File]::WriteAllText($f, $yaml, [System.Text.Encoding]::UTF8)
+      kubectl apply -f $f
+      Remove-Item $f -ErrorAction SilentlyContinue
+      Write-Host "[OK] PriorityClass 생성 완료"
+    EOT
+  }
+
+  depends_on = [null_resource.kubeconfig]
+}
+
+# ============================================================
 # kube-prometheus-stack 설치 (self-hosted Prometheus + Grafana)
 # AMP/AMG 없이 클러스터 내부에서 완결 — 비용 $0
 # ============================================================
@@ -173,7 +253,7 @@ resource "null_resource" "install_prometheus" {
         --namespace monitoring --create-namespace `
         -f "${path.module}/../helm/y2ks/prometheus-values.yaml" `
         --set grafana.adminPassword="${var.grafana_admin_password}" `
-        --wait --timeout 8m
+        --wait --timeout 12m
       if ($LASTEXITCODE -ne 0) { throw "kube-prometheus-stack 설치 실패" }
       Write-Host "[OK] kube-prometheus-stack 설치 완료"
 
@@ -236,7 +316,7 @@ resource "null_resource" "install_prometheus" {
     EOT
   }
 
-  depends_on = [null_resource.kubeconfig]
+  depends_on = [null_resource.kubeconfig, null_resource.create_priority_classes]
 }
 
 # ============================================================
