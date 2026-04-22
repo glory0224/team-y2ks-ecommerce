@@ -1,0 +1,14 @@
+FROM python:3.9-slim
+
+RUN pip install --no-cache-dir \
+    flask \
+    redis \
+    scikit-learn \
+    numpy \
+    boto3
+
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1
+
+CMD ["python", "-u", "/app/recommend.py"]

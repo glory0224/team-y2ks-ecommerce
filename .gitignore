@@ -45,3 +45,7 @@ build/
 ### 5. AI Tool Metadata
 .kiro/
 .claude/
+# Kaggle raw data & preview
+scripts/articles.csv
+scripts/articles.csv.zip
+_preview_main.html

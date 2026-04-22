@@ -697,6 +697,7 @@ resource "null_resource" "install_y2ks" {
         --set images.frontend=${aws_ecr_repository.frontend.repository_url}:latest `
         --set images.worker=${aws_ecr_repository.worker.repository_url}:latest `
         --set images.agent=${aws_ecr_repository.agent.repository_url}:latest `
+        --set images.recommend=${aws_ecr_repository.recommend.repository_url}:latest `
         --set adminToken="${var.admin_token}" `
         --set grafanaPassword="${var.grafana_admin_password}"
     EOT

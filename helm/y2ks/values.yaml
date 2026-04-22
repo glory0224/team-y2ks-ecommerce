@@ -18,11 +18,13 @@ senderEmail: "wooseoyun@naver.com"
 ticketCount: 100
 
 images:
-  frontend: ""  # terraform apply 시 자동 주입 — 직접 수정 금지
-  worker: ""    # terraform apply 시 자동 주입 — 직접 수정 금지
-  agent: ""     # terraform apply 시 자동 주입 — 직접 수정 금지
+  frontend: ""   # terraform apply 시 자동 주입 — 직접 수정 금지
+  worker: ""     # terraform apply 시 자동 주입 — 직접 수정 금지
+  agent: ""      # terraform apply 시 자동 주입 — 직접 수정 금지
+  recommend: ""  # terraform apply 시 자동 주입 — 직접 수정 금지
 
-adminToken: ""      # terraform apply --set adminToken=<YOUR_TOKEN> 으로 주입
+adminToken: ""        # terraform apply --set adminToken=<YOUR_TOKEN> 으로 주입
+recommendBucket: "y2ks-recommend-data-951913065915"
 grafanaPassword: "" # terraform apply 시 자동 주입
 
 worker:

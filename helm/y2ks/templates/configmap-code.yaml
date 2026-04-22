@@ -344,11 +344,46 @@ data:
         except urllib.error.URLError as e:
             return jsonify({'error': f'Agent 서비스 연결 실패: {e}'}), 502
 
+    RECOMMEND_URL = os.environ.get('RECOMMEND_SERVICE_URL', 'http://y2ks-recommend-svc:5001')
+
+    @app.route('/api/recommend')
+    def proxy_recommend():
+        try:
+            params = request.query_string.decode()
+            req = urllib.request.Request(f'{RECOMMEND_URL}/recommend?{params}')
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                return app.response_class(resp.read(), status=resp.status, mimetype='application/json')
+        except Exception:
+            return jsonify([]), 200
+
+    @app.route('/api/event', methods=['POST'])
+    def proxy_event():
+        try:
+            req = urllib.request.Request(
+                f'{RECOMMEND_URL}/event',
+                data=request.get_data(),
+                headers={'Content-Type': 'application/json'},
+                method='POST'
+            )
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                return app.response_class(resp.read(), status=resp.status, mimetype='application/json')
+        except Exception:
+            return jsonify({'ok': False}), 200
+
+    @app.route('/api/rec/health')
+    def proxy_rec_health():
+        try:
+            req = urllib.request.Request(f'{RECOMMEND_URL}/health')
+            with urllib.request.urlopen(req, timeout=2) as resp:
+                return app.response_class(resp.read(), status=resp.status, mimetype='application/json')
+        except Exception:
+            return jsonify({'ok': False}), 503
+
     if __name__ == '__main__':
         app.run(host='0.0.0.0', port=5000, debug=False)
 
   worker.py: |
-    import boto3, redis, json, time, os, random, string, bcrypt
+    import boto3, redis, json, time, os, random, string, hashlib
     from datetime import datetime, timezone
 
     REDIS_HOST = os.environ.get('REDIS_HOST', 'redis-service')
@@ -363,7 +398,8 @@ data:
     table = ddb.Table(DDB_TABLE)
 
     def hash_password(password):
-        return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=4)).decode()
+        salt = os.urandom(16).hex()
+        return f'{salt}:{hashlib.sha256(f"{salt}:{password}".encode()).hexdigest()}'
 
     def gen_coupon():
         chars = string.ascii_uppercase + string.digits
@@ -449,5 +485,121 @@ data:
         except Exception as e:
             print(f'Queue error: {e}', flush=True)
             time.sleep(2)
+
+  recommend.py: |
+    from flask import Flask, jsonify, request
+    import redis, os, json, boto3
+
+    app = Flask(__name__)
+
+    REDIS_HOST = os.environ.get('REDIS_HOST', 'redis-service')
+    RECOMMEND_BUCKET = os.environ.get('RECOMMEND_BUCKET', '')
+    AWS_REGION = os.environ.get('AWS_REGION', 'ap-northeast-2')
+    r = redis.Redis(host=REDIS_HOST, port=6379, db=1, decode_responses=True)
+
+    def load_products_from_s3():
+        try:
+            s3 = boto3.client('s3', region_name=AWS_REGION)
+            obj = s3.get_object(Bucket=RECOMMEND_BUCKET, Key='products.json')
+            products = json.loads(obj['Body'].read())
+            print(f'S3에서 {len(products)}개 상품 로드 완료', flush=True)
+            return products
+        except Exception as e:
+            print(f'S3 로드 실패, 하드코딩 폴백: {e}', flush=True)
+            return None
+
+    PRODUCTS = [
+      {"id":"p001","name":"체크 플란넬 셔츠","brand":"Y2KS BASIC","category":"상의","price":89000,"badge":"BEST","image":"https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/flannel-shirt.jpg","tags":["체크","플란넬","캐주얼","기본","셔츠"],"weight":0.95},
+      {"id":"p002","name":"네이비 니트 스웨터","brand":"Y2KS KNIT","category":"상의","price":79000,"badge":"NEW","image":"https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/knit-sweater.jpg","tags":["니트","스웨터","네이비","따뜻한"],"weight":0.90},
+      {"id":"p003","name":"데님 트러커 재킷","brand":"Y2KS DENIM","category":"아우터","price":139000,"badge":"BEST","image":"https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/denim-jacket.jpg","tags":["데님","재킷","트러커","아우터"],"weight":0.93},
+      {"id":"p004","name":"레터링 블랙 티셔츠","brand":"Y2KS BASIC","category":"상의","price":35000,"badge":"","image":"https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/black-tshirt.jpg","tags":["티셔츠","블랙","레터링","기본"],"weight":0.85},
+      {"id":"p005","name":"크로셰 그래니 가디건","brand":"Y2KS KNIT","category":"상의","price":125000,"badge":"NEW","image":"https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/cardigan.jpg","tags":["크로셰","가디건","니트","봄"],"weight":0.88},
+      {"id":"p006","name":"린넨 슬리브리스 베스트","brand":"Y2KS LINEN","category":"상의","price":59000,"badge":"","image":"https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/linen-vest.jpg","tags":["린넨","베스트","민소매","여름"],"weight":0.82},
+      {"id":"p007","name":"린넨 반소매 블라우스","brand":"Y2KS LINEN","category":"상의","price":55000,"badge":"NEW","image":"https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/linen-blouse.jpg","tags":["린넨","블라우스","반소매","여름"],"weight":0.87},
+      {"id":"p008","name":"테라코타 봄버 재킷","brand":"Y2KS OUTER","category":"아우터","price":119000,"badge":"SALE","image":"https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/bomber-jacket.jpg","tags":["봄버","재킷","테라코타","아우터","세일"],"weight":0.80},
+      {"id":"p009","name":"와이드 데님 팬츠","brand":"Y2KS DENIM","category":"하의","price":89000,"badge":"BEST","image":"https://picsum.photos/seed/y2ks09/400/530","tags":["데님","청바지","와이드","하의"],"weight":0.91},
+      {"id":"p010","name":"플리츠 미디 스커트","brand":"Y2KS BASIC","category":"하의","price":69000,"badge":"NEW","image":"https://picsum.photos/seed/y2ks10/400/530","tags":["플리츠","스커트","미디","하의"],"weight":0.86},
+      {"id":"p011","name":"오버사이즈 후드집업","brand":"Y2KS BASIC","category":"상의","price":79000,"badge":"","image":"https://picsum.photos/seed/y2ks11/400/530","tags":["후드","집업","오버사이즈","캐주얼"],"weight":0.84},
+      {"id":"p012","name":"슬림 슬랙스","brand":"Y2KS BASIC","category":"하의","price":75000,"badge":"BEST","image":"https://picsum.photos/seed/y2ks12/400/530","tags":["슬랙스","슬림","하의","포멀"],"weight":0.89},
+      {"id":"p013","name":"스트라이프 롱 원피스","brand":"Y2KS LINEN","category":"원피스","price":99000,"badge":"NEW","image":"https://picsum.photos/seed/y2ks13/400/530","tags":["원피스","스트라이프","롱","여름","린넨"],"weight":0.87},
+      {"id":"p014","name":"플로럴 미니 원피스","brand":"Y2KS LINEN","category":"원피스","price":85000,"badge":"NEW","image":"https://picsum.photos/seed/y2ks14/400/530","tags":["원피스","플로럴","미니","봄","꽃무늬"],"weight":0.86},
+      {"id":"p015","name":"캔버스 토트백","brand":"Y2KS BASIC","category":"가방","price":49000,"badge":"BEST","image":"https://picsum.photos/seed/y2ks15/400/530","tags":["토트백","캔버스","가방","데일리"],"weight":0.88},
+      {"id":"p016","name":"청키 스니커즈 화이트","brand":"Y2KS SHOE","category":"신발","price":129000,"badge":"NEW","image":"https://picsum.photos/seed/y2ks16/400/530","tags":["스니커즈","청키","화이트","신발"],"weight":0.90},
+      {"id":"p017","name":"플랫 로퍼 블랙","brand":"Y2KS SHOE","category":"신발","price":89000,"badge":"","image":"https://picsum.photos/seed/y2ks17/400/530","tags":["로퍼","플랫","블랙","신발","포멀"],"weight":0.83},
+      {"id":"p018","name":"크롭 데님 재킷","brand":"Y2KS DENIM","category":"아우터","price":109000,"badge":"SALE","image":"https://picsum.photos/seed/y2ks18/400/530","tags":["데님","재킷","크롭","아우터","세일"],"weight":0.81},
+      {"id":"p019","name":"울 머플러 베이지","brand":"Y2KS KNIT","category":"소품","price":39000,"badge":"","image":"https://picsum.photos/seed/y2ks19/400/530","tags":["머플러","울","베이지","니트"],"weight":0.75},
+      {"id":"p020","name":"오버사이즈 코튼 셔츠","brand":"Y2KS BASIC","category":"상의","price":65000,"badge":"","image":"https://picsum.photos/seed/y2ks20/400/530","tags":["셔츠","코튼","오버사이즈","기본","여름"],"weight":0.83},
+    ]
+
+    if RECOMMEND_BUCKET:
+        _s3_products = load_products_from_s3()
+        if _s3_products:
+            PRODUCTS = _s3_products
+
+    PRODUCT_INDEX = {p['id']: i for i, p in enumerate(PRODUCTS)}
+    SIM_KEY = 'rec:sim_matrix'
+
+    def build_sim():
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        from sklearn.metrics.pairwise import cosine_similarity
+        corpus = [
+            f"{p['category']} {p['brand'].replace('Y2KS ','')} {' '.join(p['tags'])}"
+            for p in PRODUCTS
+        ]
+        sim = cosine_similarity(TfidfVectorizer().fit_transform(corpus)).tolist()
+        r.setex(SIM_KEY, 86400, json.dumps(sim))
+        print('Similarity matrix built and cached.', flush=True)
+        return sim
+
+    def get_sim():
+        cached = r.get(SIM_KEY)
+        return json.loads(cached) if cached else build_sim()
+
+    @app.route('/health')
+    def health():
+        return jsonify({'ok': True})
+
+    @app.route('/event', methods=['POST'])
+    def track_event():
+        data = request.json or {}
+        sid = data.get('session_id', '')
+        pid = data.get('product_id', '')
+        if sid and pid and pid in PRODUCT_INDEX:
+            key = f'rec:sess:{sid}'
+            r.lpush(key, pid)
+            r.ltrim(key, 0, 9)
+            r.expire(key, 3600)
+        return jsonify({'ok': True})
+
+    @app.route('/recommend')
+    def recommend():
+        viewed_param = request.args.get('viewed', '')
+        session_id = request.args.get('session', '')
+        viewed = [v for v in viewed_param.split(',') if v and v in PRODUCT_INDEX]
+        if not viewed and session_id:
+            viewed = r.lrange(f'rec:sess:{session_id}', 0, 4)
+        exclude = set(viewed)
+        scores = {}
+        if viewed:
+            sim = get_sim()
+            for pid in viewed:
+                idx = PRODUCT_INDEX.get(pid)
+                if idx is None:
+                    continue
+                for i, score in enumerate(sim[idx]):
+                    cand = PRODUCTS[i]['id']
+                    if cand not in exclude:
+                        scores[cand] = scores.get(cand, 0.0) + score
+        if not scores:
+            for p in PRODUCTS:
+                if p['id'] not in exclude:
+                    scores[p['id']] = p['weight']
+        top_ids = sorted(scores, key=scores.get, reverse=True)[:8]
+        result = [p for p in PRODUCTS if p['id'] in top_ids]
+        return jsonify(result[:8])
+
+    if __name__ == '__main__':
+        build_sim()
+        app.run(host='0.0.0.0', port=5001, debug=False)
 
 

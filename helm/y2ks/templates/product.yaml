@@ -1,5 +1,6 @@
-# 상품 파드 — ondemand-node2(AZ-b) 고정, y2ks-low(100)
+# 추천 파드 — ondemand-node2(AZ-b) 고정, y2ks-low(100)
 # Worker(500)가 Pending 시 선점 대상이 되어 자리를 비워줌
+# → 부하 테스트 시 추천 섹션만 다운, BEST SELLERS는 프론트에서 그대로 표시
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -21,6 +22,7 @@ spec:
       labels:
         app: product
     spec:
+      serviceAccountName: worker-sa
       priorityClassName: y2ks-low
       affinity:
         nodeAffinity:
@@ -32,23 +34,57 @@ spec:
                 values: ["ondemand-2", "ondemand-1"]
       containers:
       - name: product
-        image: nginx:alpine
+        image: "{{ .Values.images.recommend }}"
+        command: ["python", "-u", "/app/recommend.py"]
+        ports:
+        - containerPort: 5001
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 5001
+          initialDelaySeconds: 20
+          periodSeconds: 10
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5001
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          failureThreshold: 3
         resources:
           requests:
             cpu: 300m
             memory: 300Mi
           limits:
             cpu: 500m
-            memory: 500Mi
+            memory: 450Mi
+        env:
+        - name: REDIS_HOST
+          value: "redis-service"
+        - name: RECOMMEND_BUCKET
+          value: "{{ .Values.recommendBucket }}"
+        - name: AWS_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: aws-config
+              key: AWS_REGION
+        volumeMounts:
+        - name: code-volume
+          mountPath: /app
+      volumes:
+      - name: code-volume
+        configMap:
+          name: y2ks-app-code
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: y2ks-product-svc
+  name: y2ks-recommend-svc
 spec:
   selector:
     app: product
   ports:
     - protocol: TCP
-      port: 80
-      targetPort: 80
+      port: 5001
+      targetPort: 5001
