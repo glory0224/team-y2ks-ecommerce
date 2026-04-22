@@ -26,6 +26,11 @@ spec:
     spec:
       serviceAccountName: worker-sa
       priorityClassName: y2ks-high
+      tolerations:
+      - key: karpenter
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -34,19 +39,24 @@ spec:
               - key: node-type
                 operator: In
                 values: ["ondemand-1", "ondemand-2"]
-        podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
           - weight: 100
-            podAffinityTerm:
-              labelSelector:
-                matchLabels:
-                  app: frontend
-              topologyKey: kubernetes.io/hostname
+            preference:
+              matchExpressions:
+              - key: eks.amazonaws.com/nodegroup
+                operator: Exists
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: frontend
       containers:
       - name: web
         image: "{{ .Values.images.frontend }}"
         command: ["gunicorn"]
-        args: ["--bind", "0.0.0.0:5000", "--workers", "4", "--worker-class", "gthread", "--threads", "3", "--timeout", "180", "--chdir", "/app", "app:app"]
+        args: ["--bind", "0.0.0.0:5000", "--workers", "8", "--worker-class", "gthread", "--threads", "3", "--timeout", "180", "--chdir", "/app", "app:app"]
         ports:
         - containerPort: 5000
         readinessProbe:
@@ -67,7 +77,7 @@ spec:
         resources:
           requests:
             cpu: 400m
-            memory: 300Mi
+            memory: 450Mi
           limits:
             cpu: 1000m
             memory: 768Mi

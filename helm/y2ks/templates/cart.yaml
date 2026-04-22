@@ -22,6 +22,11 @@ spec:
         app: cart
     spec:
       priorityClassName: y2ks-low
+      tolerations:
+      - key: karpenter
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -29,7 +34,7 @@ spec:
             - matchExpressions:
               - key: node-type
                 operator: In
-                values: ["ondemand-2", "ondemand-1"]
+                values: ["ondemand-2", "ondemand-1", "spot-1"]
       containers:
       - name: cart
         image: nginx:alpine
