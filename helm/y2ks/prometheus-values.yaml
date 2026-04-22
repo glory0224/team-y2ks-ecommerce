@@ -1,5 +1,6 @@
 prometheus:
   prometheusSpec:
+    priorityClassName: y2ks-critical
     enableRemoteWriteReceiver: true
     affinity:
       nodeAffinity:
@@ -8,7 +9,7 @@ prometheus:
           - matchExpressions:
             - key: node-type
               operator: In
-              values: ["ondemand-1"]
+              values: ["ondemand-1", "ondemand-2"]
     resources:
       requests:
         cpu: 200m
@@ -32,6 +33,7 @@ prometheus:
 grafana:
   enabled: true
   adminPassword: ""  # terraform apply 시 --set grafana.adminPassword 로 자동 주입
+  priorityClassName: y2ks-high
   affinity:
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
