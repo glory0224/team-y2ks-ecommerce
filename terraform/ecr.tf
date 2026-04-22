@@ -32,15 +32,26 @@ resource "aws_ecr_repository" "agent" {
   }
 }
 
+resource "aws_ecr_repository" "recommend" {
+  name                 = "y2ks-recommend"
+  image_tag_mutability = "MUTABLE"
+  force_delete         = true
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+}
+
 # ============================================================
 # Docker 이미지 빌드 & ECR 푸시
 # terraform apply 시 Dockerfile 변경 감지 → 자동 재빌드
 # ============================================================
 resource "null_resource" "build_and_push_images" {
   triggers = {
-    frontend_dockerfile = sha256(file("${path.module}/../Dockerfile.frontend"))
-    worker_dockerfile   = sha256(file("${path.module}/../Dockerfile.worker"))
-    agent_dockerfile    = sha256(file("${path.module}/../Dockerfile.agent"))
+    frontend_dockerfile  = sha256(file("${path.module}/../Dockerfile.frontend"))
+    worker_dockerfile    = sha256(file("${path.module}/../Dockerfile.worker"))
+    agent_dockerfile     = sha256(file("${path.module}/../Dockerfile.agent"))
+    recommend_dockerfile = sha256(file("${path.module}/../Dockerfile.recommend"))
   }
 
   provisioner "local-exec" {
@@ -72,6 +83,12 @@ resource "null_resource" "build_and_push_images" {
       docker push "${aws_ecr_repository.agent.repository_url}:latest"
       if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] agent 푸시 실패"; exit 1 }
 
+      Write-Host "=== recommend 이미지 빌드 & 푸시 ==="
+      docker build -t y2ks-recommend -f ${path.module}/../Dockerfile.recommend ${path.module}/..
+      docker tag y2ks-recommend:latest "${aws_ecr_repository.recommend.repository_url}:latest"
+      docker push "${aws_ecr_repository.recommend.repository_url}:latest"
+      if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] recommend 푸시 실패"; exit 1 }
+
       Write-Host "=== 빌드 & 푸시 완료 ==="
     EOT
   }
@@ -80,6 +97,7 @@ resource "null_resource" "build_and_push_images" {
     aws_ecr_repository.frontend,
     aws_ecr_repository.worker,
     aws_ecr_repository.agent,
+    aws_ecr_repository.recommend,
     null_resource.kubeconfig,
   ]
 }

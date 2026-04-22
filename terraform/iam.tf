@@ -85,6 +85,27 @@ resource "aws_iam_role_policy_attachment" "worker_dynamodb" {
   policy_arn = aws_iam_policy.worker_dynamodb.arn
 }
 
+resource "aws_iam_policy" "worker_s3_recommend" {
+  name = "Y2ksWorkerS3RecommendPolicy"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid    = "S3RecommendAccess"
+      Effect = "Allow"
+      Action = ["s3:GetObject", "s3:PutObject", "s3:CreateBucket", "s3:ListBucket"]
+      Resource = [
+        "arn:aws:s3:::y2ks-recommend-data-${data.aws_caller_identity.current.account_id}",
+        "arn:aws:s3:::y2ks-recommend-data-${data.aws_caller_identity.current.account_id}/*"
+      ]
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "worker_s3_recommend" {
+  role       = aws_iam_role.worker.name
+  policy_arn = aws_iam_policy.worker_s3_recommend.arn
+}
+
 # ============================================================
 # KEDA Operator IAM
 # 기존: keda-operator-trust-policy.json + AWS CLI

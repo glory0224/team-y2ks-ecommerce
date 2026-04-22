@@ -78,6 +78,13 @@ data:
     .ft-col p{cursor:default;transition:color .2s}
     .ft-col p:hover{color:rgba(255,255,255,.7)}
     @media(max-width:900px){.grid{grid-template-columns:repeat(2,1fr)}.hero-title{font-size:44px}.search{display:none}}
+    .rec-section{max-width:1400px;margin:0 auto;padding:0 48px 80px}
+    .rec-header{display:flex;align-items:baseline;gap:14px;margin-bottom:32px;padding-bottom:16px;border-bottom:2px solid var(--black)}
+    .card.clickable{cursor:pointer}
+    .card.clickable:hover .card-name{color:var(--accent)}
+    .card-skeleton .card-img{background:var(--g200);border-radius:6px;aspect-ratio:3/4}
+    .skel-line{background:var(--g200);border-radius:4px;height:11px;margin-bottom:8px}
+    .skel-line.w60{width:60%}.skel-line.w80{width:80%}.skel-line.w40{width:40%}
     </style>
     </head>
     <body>
@@ -127,20 +134,27 @@ data:
         <a href="/event" class="eb-btn">쿠폰 받기 →</a>
       </div>
     </div>
+    <section class="rec-section">
+      <div class="rec-header">
+        <h2 class="sec-title">Y2KS 카테고리 트렌드</h2>
+        <span class="sec-sub">사용자님과 유사한 연령대가 구매했어요</span>
+      </div>
+      <div id="rec-grid" class="grid"></div>
+    </section>
     <main class="section">
       <div class="sec-header">
         <h2 class="sec-title">BEST SELLERS</h2>
         <span class="sec-sub">이번 시즌 가장 사랑받는 아이템</span>
       </div>
       <div class="grid">
-        <div class="card"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/flannel-shirt.jpg" alt="체크 플란넬 셔츠"><span class="badge b-best">BEST</span></div><div class="card-brand">Y2KS BASIC</div><div class="card-name">체크 플란넬 셔츠</div><div class="card-price">89,000원</div></div>
-        <div class="card"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/knit-sweater.jpg" alt="네이비 니트 스웨터"><span class="badge b-new">NEW</span></div><div class="card-brand">Y2KS KNIT</div><div class="card-name">네이비 니트 스웨터</div><div class="card-price">79,000원</div></div>
-        <div class="card"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/denim-jacket.jpg" alt="데님 트러커 재킷"><span class="badge b-best">BEST</span></div><div class="card-brand">Y2KS DENIM</div><div class="card-name">데님 트러커 재킷</div><div class="card-price">139,000원</div></div>
-        <div class="card"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/black-tshirt.jpg" alt="레터링 블랙 티셔츠"></div><div class="card-brand">Y2KS BASIC</div><div class="card-name">레터링 블랙 티셔츠</div><div class="card-price">35,000원</div></div>
-        <div class="card"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/cardigan.jpg" alt="크로셰 그래니 가디건"><span class="badge b-new">NEW</span></div><div class="card-brand">Y2KS KNIT</div><div class="card-name">크로셰 그래니 가디건</div><div class="card-price">125,000원</div></div>
-        <div class="card"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/linen-vest.jpg" alt="린넨 슬리브리스 베스트"></div><div class="card-brand">Y2KS LINEN</div><div class="card-name">린넨 슬리브리스 베스트</div><div class="card-price">59,000원</div></div>
-        <div class="card"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/linen-blouse.jpg" alt="린넨 반소매 블라우스"><span class="badge b-new">NEW</span></div><div class="card-brand">Y2KS LINEN</div><div class="card-name">린넨 반소매 블라우스</div><div class="card-price">55,000원</div></div>
-        <div class="card"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/bomber-jacket.jpg" alt="테라코타 봄버 재킷"><span class="badge b-sale">SALE</span></div><div class="card-brand">Y2KS OUTER</div><div class="card-name">테라코타 봄버 재킷</div><div class="card-price">119,000원</div></div>
+        <div class="card clickable" onclick="trackClick('p001')"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/flannel-shirt.jpg" alt="체크 플란넬 셔츠"><span class="badge b-best">BEST</span></div><div class="card-brand">Y2KS BASIC</div><div class="card-name">체크 플란넬 셔츠</div><div class="card-price">89,000원</div></div>
+        <div class="card clickable" onclick="trackClick('p002')"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/knit-sweater.jpg" alt="네이비 니트 스웨터"><span class="badge b-new">NEW</span></div><div class="card-brand">Y2KS KNIT</div><div class="card-name">네이비 니트 스웨터</div><div class="card-price">79,000원</div></div>
+        <div class="card clickable" onclick="trackClick('p003')"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/denim-jacket.jpg" alt="데님 트러커 재킷"><span class="badge b-best">BEST</span></div><div class="card-brand">Y2KS DENIM</div><div class="card-name">데님 트러커 재킷</div><div class="card-price">139,000원</div></div>
+        <div class="card clickable" onclick="trackClick('p004')"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/black-tshirt.jpg" alt="레터링 블랙 티셔츠"></div><div class="card-brand">Y2KS BASIC</div><div class="card-name">레터링 블랙 티셔츠</div><div class="card-price">35,000원</div></div>
+        <div class="card clickable" onclick="trackClick('p005')"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/cardigan.jpg" alt="크로셰 그래니 가디건"><span class="badge b-new">NEW</span></div><div class="card-brand">Y2KS KNIT</div><div class="card-name">크로셰 그래니 가디건</div><div class="card-price">125,000원</div></div>
+        <div class="card clickable" onclick="trackClick('p006')"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/linen-vest.jpg" alt="린넨 슬리브리스 베스트"></div><div class="card-brand">Y2KS LINEN</div><div class="card-name">린넨 슬리브리스 베스트</div><div class="card-price">59,000원</div></div>
+        <div class="card clickable" onclick="trackClick('p007')"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/linen-blouse.jpg" alt="린넨 반소매 블라우스"><span class="badge b-new">NEW</span></div><div class="card-brand">Y2KS LINEN</div><div class="card-name">린넨 반소매 블라우스</div><div class="card-price">55,000원</div></div>
+        <div class="card clickable" onclick="trackClick('p008')"><div class="card-img"><img src="https://y2ks-product-images.s3.ap-northeast-2.amazonaws.com/bomber-jacket.jpg" alt="테라코타 봄버 재킷"><span class="badge b-sale">SALE</span></div><div class="card-brand">Y2KS OUTER</div><div class="card-name">테라코타 봄버 재킷</div><div class="card-price">119,000원</div></div>
       </div>
     </main>
     <footer>
@@ -159,6 +173,60 @@ data:
         </div>
       </div>
     </footer>
+    <script>
+    var REC_SESSION = localStorage.getItem('y2ks_sid');
+    if (!REC_SESSION) {
+      REC_SESSION = Math.random().toString(36).slice(2) + Date.now().toString(36);
+      localStorage.setItem('y2ks_sid', REC_SESSION);
+    }
+    var viewedIds = [];
+
+    function badgeHtml(badge) {
+      if (!badge) return '';
+      var cls = badge === 'BEST' ? 'b-best' : badge === 'NEW' ? 'b-new' : 'b-sale';
+      return '<span class="badge ' + cls + '">' + badge + '</span>';
+    }
+
+    var SKEL = '<div class="card card-skeleton"><div class="card-img"></div><div class="skel-line w60"></div><div class="skel-line w80"></div><div class="skel-line w40"></div></div>';
+    function renderRec(items) {
+      var grid = document.getElementById('rec-grid');
+      if (!items || items.length === 0) {
+        grid.innerHTML = SKEL + SKEL + SKEL + SKEL;
+        return;
+      }
+      grid.innerHTML = items.map(function(p) {
+        var price = p.price.toLocaleString('ko-KR') + '원';
+        return '<div class="card clickable" onclick="trackClick(\'' + p.id + '\')">' +
+          '<div class="card-img"><img src="' + p.image + '" alt="' + p.name + '" loading="lazy">' + badgeHtml(p.badge) + '</div>' +
+          '<div class="card-brand">' + p.brand + '</div>' +
+          '<div class="card-name">' + p.name + '</div>' +
+          '<div class="card-price">' + price + '</div></div>';
+      }).join('');
+    }
+
+    function loadRecommend() {
+      var params = 'session=' + REC_SESSION;
+      if (viewedIds.length > 0) params += '&viewed=' + viewedIds.slice(-5).join(',');
+      fetch('/api/recommend?' + params)
+        .then(function(r) { return r.ok ? r.json() : []; })
+        .then(renderRec)
+        .catch(function() { renderRec([]); });
+    }
+
+    function trackClick(pid) {
+      if (viewedIds[viewedIds.length - 1] === pid) return;
+      viewedIds.push(pid);
+      if (viewedIds.length > 10) viewedIds.shift();
+      fetch('/api/event', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({session_id: REC_SESSION, product_id: pid})
+      }).catch(function(){});
+      loadRecommend();
+    }
+
+    loadRecommend();
+    </script>
     </body>
     </html>
 
