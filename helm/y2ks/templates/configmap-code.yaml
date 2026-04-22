@@ -161,7 +161,6 @@ data:
         added = r.sadd('participants', nickname)
         if added == 0:
             return jsonify({'error': 'duplicate', 'message': '이미 참여하셨습니다.'}), 409
-        password_hash = hash_password(password)
         r.setex(f'result:{nickname}', 600, 'pending')
         try:
             # 프론트엔드가 DynamoDB에 직접 password_hash 저장 (워커 경유 없이)
@@ -349,7 +348,7 @@ data:
         app.run(host='0.0.0.0', port=5000, debug=False)
 
   worker.py: |
-    import boto3, redis, json, time, os, random, string
+    import boto3, redis, json, time, os, random, string, bcrypt
     from datetime import datetime, timezone
 
     REDIS_HOST = os.environ.get('REDIS_HOST', 'redis-service')
@@ -362,6 +361,9 @@ data:
     sqs = boto3.client('sqs', region_name=AWS_REGION)
     ddb = boto3.resource('dynamodb', region_name=AWS_REGION)
     table = ddb.Table(DDB_TABLE)
+
+    def hash_password(password):
+        return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=4)).decode()
 
     def gen_coupon():
         chars = string.ascii_uppercase + string.digits
@@ -416,7 +418,7 @@ data:
             open('/tmp/worker_alive', 'w').close()
             response = sqs.receive_message(
                 QueueUrl=QUEUE_URL,
-                MaxNumberOfMessages=1,
+                MaxNumberOfMessages=10,
                 WaitTimeSeconds=5
             )
             if 'Messages' in response:

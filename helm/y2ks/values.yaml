@@ -22,7 +22,8 @@ images:
   worker: ""    # terraform apply 시 자동 주입 — 직접 수정 금지
   agent: ""     # terraform apply 시 자동 주입 — 직접 수정 금지
 
-adminToken: ""  # terraform apply --set adminToken=<YOUR_TOKEN> 으로 주입
+adminToken: ""      # terraform apply --set adminToken=<YOUR_TOKEN> 으로 주입
+grafanaPassword: "" # terraform apply 시 자동 주입
 
 worker:
   minReplicas: 1
