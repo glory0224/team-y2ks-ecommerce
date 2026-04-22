@@ -11,6 +11,8 @@ spec:
     metadata:
       labels:
         app: k6-loadtest
+      annotations:
+        karpenter.sh/do-not-disrupt: "true"
     spec:
       serviceAccountName: worker-sa
       restartPolicy: Never

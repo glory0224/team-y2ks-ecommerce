@@ -17,6 +17,11 @@ spec:
         app: payment
     spec:
       priorityClassName: y2ks-low
+      tolerations:
+      - key: karpenter
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -24,7 +29,7 @@ spec:
             - matchExpressions:
               - key: node-type
                 operator: In
-                values: ["ondemand-1","ondemand-2"]
+                values: ["ondemand-1", "ondemand-2", "spot-1"]
       containers:
       - name: payment
         # 시연용 더미 컨테이너 — 실제 결제 로직 없음
