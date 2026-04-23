@@ -21,7 +21,7 @@ KEDA + Karpenter로 트래픽 스파이크를 자동 대응하며, Terraform 한
               │
          [SQS Queue]  ←── KEDA (메시지 수 감지)
               │                    │
-        [Worker Pod]  ─── Scale Out (1 → 50)
+        [Worker Pod]  ─── Scale Out (1 → 100)
               │            (Karpenter → EC2 노드 자동 추가)
        ┌──────┴──────┐
        │             │
@@ -219,10 +219,10 @@ kubectl get svc y2ks-frontend-svc
 | DynamoDB 테이블 | y2ks-coupon-claims |
 | KEDA 스케일 범위 | Worker 1 ~ 100개 |
 | KEDA 트리거 | 메시지 5개당 Worker 1개 |
-| Karpenter 인스턴스 | t3/t3a/c5/m5 계열 2~8코어 (On-Demand + Spot 혼합) |
-| Karpenter CPU 한도 | 120코어 |
-| Karpenter Memory 한도 | 240Gi |
-| Karpenter consolidation | 10분 후 통합 |
+| Karpenter 인스턴스 | c5/c5a/m5/m5a 계열 2~8코어 (On-Demand + Spot 분리 NodePool) |
+| Karpenter CPU 한도 | 80코어 (NodePool당) |
+| Karpenter Memory 한도 | 160Gi (NodePool당) |
+| Karpenter consolidation | 2분 후 통합 |
 | 접속 도메인 | http://y2ks.site (frontend), http://grafana.y2ks.site (Grafana) |
 | Grafana 비밀번호 | `variables.tf`의 `grafana_admin_password` (기본값: `admin123!`) |
 
@@ -332,7 +332,7 @@ kubectl port-forward -n monitoring svc/prometheus-grafana 3000:80
 
 ### 대시보드
 
-**KEDA ScaledObjects** (`/d/y2ks-keda`)
+**KEDA ScaledObjects** (`/d/keda-y2ks`)
 
 | 패널 | 의미 |
 |------|------|
@@ -342,7 +342,7 @@ kubectl port-forward -n monitoring svc/prometheus-grafana 3000:80
 | Worker Replicas | Worker Pod 현재/목표 수 |
 | KEDA Operator - Errors | 스케일링 판단 중 오류 수 |
 
-**Karpenter Node Autoscaling** (`/d/y2ks-karpenter`)
+**Karpenter Node Autoscaling** (`/d/karpenter-y2ks`)
 
 | 패널 | 의미 |
 |------|------|
@@ -352,7 +352,7 @@ kubectl port-forward -n monitoring svc/prometheus-grafana 3000:80
 | Node Provisioning Duration (p99) | 노드 생성 소요시간 |
 | NodeClaims Launched / Terminated | 노드 생성/삭제 속도 |
 
-**k6 Load Test** (`/d/y2ks-k6`)
+**k6 Load Test** (`/d/k6-y2ks`)
 
 | 패널 | 의미 |
 |------|------|
@@ -378,14 +378,14 @@ kubectl apply -f k6/job.yaml
 kubectl logs -f job/k6-loadtest -c k6
 ```
 
-**시나리오** (총 4분)
+**시나리오** (총 6분 30초)
 
 | 구간 | 시간 | VU 수 |
 |------|------|-------|
-| ramp-up | 30s | 0 → 50 |
-| ramp-up | 2m | 50 → 200 |
-| sustained | 1m | 200 |
-| ramp-down | 30s | 200 → 0 |
+| ramp-up 1 | 2m | 0 → 500 |
+| ramp-up 2 | 1m | 500 → 2000 |
+| sustained | 3m | 2000 |
+| ramp-down | 30s | 2000 → 0 |
 
 ---
 
