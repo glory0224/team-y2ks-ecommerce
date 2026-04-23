@@ -302,7 +302,7 @@ def edit_infrastructure_code(repo_filepath: str, search_text: str, replace_text:
 def create_gitops_pr(branch_name: str, commit_message: str, pr_title: str = "", pr_body: str = "") -> str:
     """수정된 파일을 새 브랜치에 커밋/푸시하고 GitHub PR을 자동 생성합니다.
 
-    """edit_infrastructure_code로 수정한 파일을 새 브랜치에 커밋하고 GitHub PR을 생성합니다.
+    edit_infrastructure_code로 수정한 파일을 새 브랜치에 커밋하고 GitHub PR을 생성합니다.
     git 설치나 repo clone 없이 GitHub API만으로 동작합니다.
 
     Args:
