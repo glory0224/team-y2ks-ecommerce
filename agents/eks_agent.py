@@ -979,22 +979,36 @@ def _route(question: str) -> list:
     return ["eks"]
 
 
+_DASHBOARD_NAME_TO_UID = {
+    "keda": "keda-y2ks",
+    "karpenter": "karpenter-y2ks",
+    "k6": "k6-y2ks",
+}
+
 def _direct_grafana(user_message: str) -> dict | None:
     """Grafana 목록/리포트 요청 시 LLM 우회하여 툴 직접 호출."""
     msg = user_message
 
-    # 그라파나/Grafana 관련 키워드 포함 여부 확인
-    grafana_kws = ["그라파나", "grafana", "대시보드"]
-    is_grafana_related = any(kw in msg.lower() if kw.isascii() else kw in msg for kw in grafana_kws)
-
-    if not is_grafana_related:
+    # 그라파나/Grafana 관련 키워드 또는 대시보드 이름 포함 여부 확인
+    grafana_kws = ["그라파나", "grafana", "대시보드", "그래프", "graph"]
+    has_grafana_kw = any(kw in msg.lower() if kw.isascii() else kw in msg for kw in grafana_kws)
+    matched_uid = next(
+        (uid for name, uid in _DASHBOARD_NAME_TO_UID.items() if name in msg.lower()),
+        None,
+    )
+    if not has_grafana_kw and not matched_uid:
         return None
 
     try:
-        # 특정 대시보드 리포트 (uid 명시된 경우) — 목록 요청보다 먼저 검사
+        # 특정 대시보드 리포트 (uid 명시된 경우) — 최우선
         uid_match = re.search(r'uid[:\s=]+([a-zA-Z0-9_-]+)', msg, re.IGNORECASE)
         if uid_match:
             result = get_grafana_dashboard_report(uid_match.group(1))
+            return {"observe": result, "final": result}
+
+        # 대시보드 이름 키워드로 특정 대시보드 지정 (예: "KEDA 그래프", "karpenter 보여줘")
+        if matched_uid:
+            result = get_grafana_dashboard_report(matched_uid)
             return {"observe": result, "final": result}
 
         # 리포트/전체 요청: 모든 대시보드 패널을 순차 조회

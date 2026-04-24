@@ -33,18 +33,18 @@ spec:
         effect: NoSchedule
       affinity:
         nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-            - matchExpressions:
-              - key: node-type
-                operator: In
-                values: ["ondemand-1", "ondemand-2"]
           preferredDuringSchedulingIgnoredDuringExecution:
           - weight: 100
             preference:
               matchExpressions:
               - key: eks.amazonaws.com/nodegroup
                 operator: Exists
+          - weight: 50
+            preference:
+              matchExpressions:
+              - key: node-type
+                operator: In
+                values: ["ondemand-1", "ondemand-2"]
       topologySpreadConstraints:
       - maxSkew: 1
         topologyKey: kubernetes.io/hostname
